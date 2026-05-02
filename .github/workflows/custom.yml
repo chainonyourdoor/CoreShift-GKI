@@ -90,7 +90,7 @@ on:
         type: choice
         required: true
         options: ["release", "artifact", "both"]
-        default: "release"
+        default: "artifact"
 
 jobs:
   build:
