@@ -147,7 +147,7 @@ jobs:
         with:
           kernel_version: ${{ matrix.kernel_version }}
 
-      - name: Install legacy private fragment hook
+      - name: Generate legacy CoreShift defconfig
         if: matrix.kernel_version == '5.10'
         uses: ./.github/actions/install-legacy-private-fragment
         with:
@@ -185,6 +185,7 @@ jobs:
         uses: ./.github/actions/build-kernel
         with:
           lto: ${{ matrix.lto }}
+          kernel_version: ${{ matrix.kernel_version }}
 
       - name: Verify final config
         uses: ./.github/actions/verify-final-config

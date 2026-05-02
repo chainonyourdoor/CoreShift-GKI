@@ -4,6 +4,9 @@ inputs:
   lto:
     required: true
     description: LTO mode.
+  kernel_version:
+    required: true
+    description: Kernel version.
 runs:
   using: composite
   steps:
@@ -23,6 +26,7 @@ runs:
         export MAKEFLAGS="-j${JOBS}"
 
         echo "BUILD_ENGINE=$BUILD_ENGINE"
+        echo "KERNEL_VERSION=${{ inputs.kernel_version }}"
         echo "LTO=${{ inputs.lto }}"
         echo "JOBS=$JOBS"
         echo "MAKEFLAGS=$MAKEFLAGS"
@@ -38,12 +42,45 @@ runs:
             //common:kernel_aarch64_dist -- \
             --dist_dir=out/dist
         else
-          export BUILD_CONFIG=common/build.config.gki.aarch64
+          if [ "${{ inputs.kernel_version }}" = "5.10" ]; then
+            export BUILD_CONFIG=common/build.config.coreshift.gki.aarch64
+          else
+            export BUILD_CONFIG=common/build.config.gki.aarch64
+          fi
+
           export LTO=${{ inputs.lto }}
           export SKIP_MRPROPER=1
           export SKIP_CP_KERNEL_HDRS=1
           export SKIP_UNSTRIPPED_MODULES=1
           export SKIP_DEBUG_INFO=1
 
+          selected_defconfig="$(
+            sed -n 's/^[[:space:]]*export[[:space:]]\+DEFCONFIG=//p; s/^[[:space:]]*DEFCONFIG=//p' "$BUILD_CONFIG" |
+            tail -n 1
+          )"
+          selected_fragment="$(
+            sed -n 's/^[[:space:]]*export[[:space:]]\+GKI_DEFCONFIG_FRAGMENT=//p; s/^[[:space:]]*GKI_DEFCONFIG_FRAGMENT=//p' "$BUILD_CONFIG" |
+            tail -n 1
+          )"
+
+          echo "selected BUILD_CONFIG=$BUILD_CONFIG"
+          echo "selected DEFCONFIG=${selected_defconfig:-unknown, inherited from sourced build config}"
+          if [ -n "$selected_fragment" ]; then
+            echo "GKI_DEFCONFIG_FRAGMENT=$selected_fragment"
+          else
+            echo "GKI_DEFCONFIG_FRAGMENT: unset"
+          fi
+          echo "private.fragment=common/private.fragment"
+
           bash build/build.sh -j"${JOBS}"
+
+          echo
+          echo "== final .config candidates =="
+          find ./out ./common/out \
+            -type f \
+            \( -name ".config" -o -name "*.config" -o -name "*kernel*.config" \) \
+            ! -path "./common/arch/arm64/configs/*" \
+            ! -path "./common/private.fragment" \
+            ! -path "./common/private.required" \
+            2>/dev/null | sort || true
         fi
