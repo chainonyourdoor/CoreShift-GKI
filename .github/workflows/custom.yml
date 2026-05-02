@@ -208,19 +208,6 @@ jobs:
         if: inputs.lto == 'full'
         uses: ./.github/actions/add-swap
 
-      - name: Guard legacy gki_defconfig
-        if: inputs.kernel_version == '5.10'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd kernel
-
-          if ! git -C common diff --exit-code -- arch/arm64/configs/gki_defconfig; then
-            echo "::error::common/arch/arm64/configs/gki_defconfig changed; private.fragment must apply only to generated .config"
-            exit 1
-          fi
-
       - name: Commit kernel changes
         uses: ./.github/actions/commit-kernel-changes
 

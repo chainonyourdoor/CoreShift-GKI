@@ -100,12 +100,73 @@ runs:
 
         FAIL=0
 
+        config_state() {
+          cfg="$1"
+          key="$2"
+
+          grep -E "^${key}=|^# ${key} is not set" "$cfg" || true
+        }
+
+        warn_dependency_blockers() {
+          cfg="$1"
+          key="${2#CONFIG_}"
+          config_key="CONFIG_${key}"
+          deps_file="$(mktemp)"
+
+          find common -type f -name 'Kconfig*' -print0 2>/dev/null |
+            xargs -0 awk -v target="$key" '
+              $1 == "config" || $1 == "menuconfig" {
+                in_target = ($2 == target)
+                next
+              }
+              in_target && /^[[:space:]]+(depends on|select|imply)[[:space:]]/ {
+                print
+              }
+            ' > "$deps_file" || true
+
+          if [ ! -s "$deps_file" ]; then
+            echo "::warning::${config_key} may be blocked by missing dependencies; no Kconfig dependency entry was found."
+            rm -f "$deps_file"
+            return
+          fi
+
+          echo "::warning::${config_key} may be blocked by missing dependencies. Kconfig constraints:"
+          sed 's/^[[:space:]]*/  /' "$deps_file"
+
+          blockers="$(
+            { grep -Eo '\b[A-Z][A-Z0-9_]{2,}\b' "$deps_file" || true; } |
+              { grep -Ev '^(CONFIG|MODULES|EXPERT|BROKEN)$' || true; } |
+              sort -u |
+              while read -r dep; do
+                [ -z "$dep" ] && continue
+                dep_key="CONFIG_${dep}"
+                [ "$dep_key" = "$config_key" ] && continue
+
+                if ! grep -Eq "^${dep_key}=y|^${dep_key}=m" "$cfg"; then
+                  state="$(config_state "$cfg" "$dep_key")"
+                  if [ -n "$state" ]; then
+                    printf '%s\n' "$state"
+                  else
+                    printf '%s missing from final config\n' "$dep_key"
+                  fi
+                fi
+              done
+          )"
+
+          if [ -n "$blockers" ]; then
+            echo "::warning::Potential missing dependency state for ${config_key}:"
+            printf '%s\n' "$blockers" | sed 's/^/  /'
+          fi
+
+          rm -f "$deps_file"
+        }
+
         echo "== final private.required states =="
         while read -r line; do
           [ -z "$line" ] && continue
 
           key="${line%%=*}"
-          state="$(grep -E "^${key}=|^# ${key} is not set" "$BEST" || true)"
+          state="$(config_state "$BEST" "$key")"
 
           if [ -n "$state" ]; then
             echo "$state"
@@ -115,9 +176,26 @@ runs:
 
           if ! grep -qxF "$line" "$BEST"; then
             echo "::warning::$line did not land in final .config"
+            warn_dependency_blockers "$BEST" "$key"
             FAIL=1
           fi
         done < "$REQUIRED"
+
+        echo
+        echo "== final container IPC/network dependency state =="
+        for key in \
+          CONFIG_IPC_NS \
+          CONFIG_SYSVIPC \
+          CONFIG_POSIX_MQUEUE \
+          CONFIG_BRIDGE_NETFILTER
+        do
+          state="$(config_state "$BEST" "$key")"
+          if [ -n "$state" ]; then
+            echo "$state"
+          else
+            echo "$key missing from final config"
+          fi
+        done
 
         echo
         echo "== final protected config state =="
@@ -145,7 +223,7 @@ runs:
           echo "== nearby requested config state =="
           cut -d= -f1 "$REQUIRED" | while read -r key; do
             [ -z "$key" ] && continue
-            grep -E "^${key}=|^# ${key} is not set" "$BEST" || true
+            config_state "$BEST" "$key"
           done
 
           if [ "${{ inputs.strict_config }}" = "on" ]; then
