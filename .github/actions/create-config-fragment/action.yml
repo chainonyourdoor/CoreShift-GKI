@@ -82,7 +82,6 @@ runs:
           add_config NAMESPACES y
           add_config USER_NS y
           add_config UTS_NS y
-          add_config IPC_NS y
           add_config NET_NS y
           add_config PID_NS y
 
@@ -100,6 +99,7 @@ runs:
           add_config SYSCTL y
           add_config SYSVIPC y
           add_config SYSVIPC_SYSCTL y
+          add_config IPC_NS y
           add_config POSIX_MQUEUE y
           add_config POSIX_MQUEUE_SYSCTL y
         fi

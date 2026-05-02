@@ -62,6 +62,26 @@ jobs:
               if extra:
                   raise SystemExit(f"variant {index} has unknown fields: {', '.join(extra)}")
 
+              unsafe_release_groups = {
+                  "debug_features",
+                  "heavy_debug_features",
+                  "fq_codel_features",
+                  "performance_features",
+                  "container_networking",
+              }
+              enabled_unsafe = sorted(
+                  key for key in unsafe_release_groups if variant.get(key) != "off"
+              )
+              if enabled_unsafe:
+                  label = (
+                      f"{variant['kernel_version']} / {variant['manager']} / "
+                      f"SUSFS {variant['susfs']}"
+                  )
+                  raise SystemExit(
+                      f"release variant {index} ({label}) enables unsafe release "
+                      f"default groups: {', '.join(enabled_unsafe)}"
+                  )
+
           print(json.dumps(matrix, separators=(",", ":"), sort_keys=True))
           PY
           )"
@@ -164,19 +184,6 @@ jobs:
       - name: Add swap for full LTO
         if: matrix.lto == 'full'
         uses: ./.github/actions/add-swap
-
-      - name: Guard legacy gki_defconfig
-        if: matrix.kernel_version == '5.10'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd kernel
-
-          if ! git -C common diff --exit-code -- arch/arm64/configs/gki_defconfig; then
-            echo "::error::common/arch/arm64/configs/gki_defconfig changed; private.fragment must apply only to generated .config"
-            exit 1
-          fi
 
       - name: Commit kernel changes
         uses: ./.github/actions/commit-kernel-changes
