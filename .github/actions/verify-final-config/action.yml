@@ -100,16 +100,21 @@ runs:
 
         FAIL=0
 
+        echo "== final private.required states =="
         while read -r line; do
           [ -z "$line" ] && continue
 
           key="${line%%=*}"
+          state="$(grep -E "^${key}=|^# ${key} is not set" "$BEST" || true)"
 
-          if grep -qxF "$line" "$BEST"; then
-            echo "OK: $line"
+          if [ -n "$state" ]; then
+            echo "$state"
           else
+            echo "::warning::$key missing from final config"
+          fi
+
+          if ! grep -qxF "$line" "$BEST"; then
             echo "::warning::$line did not land in final .config"
-            grep -E "^${key}=|^# ${key} is not set" "$BEST" || true
             FAIL=1
           fi
         done < "$REQUIRED"

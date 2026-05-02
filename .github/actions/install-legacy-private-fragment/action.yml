@@ -1,9 +1,9 @@
-name: Install legacy private fragment hook
-description: Apply 5.10 private.fragment after defconfig generation without modifying gki_defconfig.
+name: Generate legacy private defconfig
+description: Generate 5.10 coreshift_gki_defconfig from gki_defconfig plus private.fragment.
 inputs:
   strict_config:
     required: true
-    description: Fail when requested configs do not land.
+    description: Kept for workflow compatibility; final config enforcement happens after build.
 runs:
   using: composite
   steps:
@@ -12,153 +12,143 @@ runs:
         set -euo pipefail
 
         ROOT_DIR="$GITHUB_WORKSPACE"
-        COMMON_DIR="$ROOT_DIR/kernel/common"
-        SCRIPT="$COMMON_DIR/scripts/apply_private_fragment.sh"
-
-        cd "$ROOT_DIR/kernel"
-        mkdir -p "$COMMON_DIR/scripts"
-
-        cat > "$SCRIPT" <<'EOF'
-        #!/usr/bin/env bash
-        set -euo pipefail
-
-        COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+        KERNEL_DIR="$ROOT_DIR/kernel"
+        COMMON_DIR="$KERNEL_DIR/common"
+        CONFIG_DIR="$COMMON_DIR/arch/arm64/configs"
+        BASE_DEFCONFIG="$CONFIG_DIR/gki_defconfig"
+        CORESHIFT_DEFCONFIG="$CONFIG_DIR/coreshift_gki_defconfig"
         FRAGMENT="$COMMON_DIR/private.fragment"
-        REQUIRED="$COMMON_DIR/private.required"
-        STRICT_CONFIG="${STRICT_CONFIG:-off}"
+        WRAPPER_CONFIG="$COMMON_DIR/build.config.coreshift.gki.aarch64"
+        MARKER="# CoreShift private config fragment"
 
-        find_out_dir() {
-          if [ -n "${OUT_DIR:-}" ] && [ -f "$OUT_DIR/.config" ]; then
-            printf '%s\n' "$OUT_DIR"
-            return 0
-          fi
+        cd "$KERNEL_DIR"
 
-          for candidate in \
-            "$COMMON_DIR/out" \
-            "$COMMON_DIR/../out" \
-            "$COMMON_DIR/../out/${BRANCH:-}" \
-            "$COMMON_DIR/out/${BRANCH:-}"
-          do
-            [ -n "$candidate" ] || continue
-            if [ -f "$candidate/.config" ]; then
-              printf '%s\n' "$candidate"
-              return 0
-            fi
-          done
-
-          return 1
-        }
-
-        if [ ! -s "$FRAGMENT" ]; then
-          echo "private.fragment is empty; nothing to apply"
-          exit 0
+        if [ ! -f "$BASE_DEFCONFIG" ]; then
+          echo "::error::missing base defconfig: $BASE_DEFCONFIG"
+          exit 1
         fi
 
-        OUT_DIR="$(find_out_dir)" || {
-          echo "::error::Unable to locate OUT_DIR/.config for private.fragment merge"
-          echo "OUT_DIR=${OUT_DIR:-}"
+        if [ ! -f "$FRAGMENT" ]; then
+          echo "::error::missing private.fragment: $FRAGMENT"
           exit 1
-        }
-        OUT_DIR="$(cd "$OUT_DIR" && pwd)"
+        fi
 
+        before_base_sha="$(sha256sum "$BASE_DEFCONFIG" | awk '{print $1}')"
+
+        cp "$BASE_DEFCONFIG" "$CORESHIFT_DEFCONFIG"
+        effective_fragment="$(mktemp)"
+
+        awk '
+          function config_key(line) {
+            if (line ~ /^CONFIG_[A-Za-z0-9_]+=/) {
+              sub(/=.*/, "", line)
+              return line
+            }
+            if (line ~ /^# CONFIG_[A-Za-z0-9_]+ is not set$/) {
+              sub(/^# /, "", line)
+              sub(/ is not set$/, "", line)
+              return line
+            }
+            return ""
+          }
+
+          {
+            key = config_key($0)
+            if (key == "") {
+              next
+            }
+            if (!(key in seen)) {
+              order[++count] = key
+              seen[key] = 1
+            }
+            value[key] = $0
+          }
+
+          END {
+            for (i = 1; i <= count; i++) {
+              print value[order[i]]
+            }
+          }
+        ' "$FRAGMENT" > "$effective_fragment"
+
+        if [ -s "$effective_fragment" ]; then
+          while IFS= read -r line; do
+            if [[ "$line" == CONFIG_*=* ]]; then
+              key="${line%%=*}"
+            else
+              key="${line#"# "}"
+              key="${key%" is not set"}"
+            fi
+
+            if ! [[ "$key" =~ ^CONFIG_[A-Za-z0-9_]+$ ]]; then
+              echo "::error::invalid CONFIG key in private.fragment: $line"
+              exit 1
+            fi
+
+            sed -i -E "/^${key}=|^# ${key} is not set$/d" "$CORESHIFT_DEFCONFIG"
+          done < "$effective_fragment"
+
+          {
+            printf '\n%s\n' "$MARKER"
+            while IFS= read -r line; do
+              printf '%s\n' "$line"
+            done < "$effective_fragment"
+          } >> "$CORESHIFT_DEFCONFIG"
+        fi
+
+        after_base_sha="$(sha256sum "$BASE_DEFCONFIG" | awk '{print $1}')"
+        if [ "$before_base_sha" != "$after_base_sha" ]; then
+          echo "::error::common/arch/arm64/configs/gki_defconfig changed during CoreShift defconfig generation"
+          exit 1
+        fi
+
+        if ! git -C "$COMMON_DIR" diff --exit-code -- arch/arm64/configs/gki_defconfig; then
+          echo "::error::common/arch/arm64/configs/gki_defconfig changed; private.fragment must apply only to coreshift_gki_defconfig"
+          exit 1
+        fi
+
+        uses_gki_fragment="no"
+        if grep -qs 'GKI_DEFCONFIG_FRAGMENT' build/build.sh "$COMMON_DIR/build.config.gki.aarch64" 2>/dev/null; then
+          uses_gki_fragment="yes"
+        fi
+
+        {
+          printf '# Generated by CoreShift workflow for legacy 5.10 builds.\n'
+          printf '. "${ROOT_DIR:-$(pwd)}/common/build.config.gki.aarch64"\n'
+          printf 'export DEFCONFIG=coreshift_gki_defconfig\n'
+          if [ "$uses_gki_fragment" = "yes" ]; then
+            printf 'export GKI_DEFCONFIG_FRAGMENT=common/private.fragment\n'
+          fi
+        } > "$WRAPPER_CONFIG"
+
+        echo "== legacy CoreShift defconfig generation =="
+        echo "base defconfig: common/arch/arm64/configs/gki_defconfig"
+        echo "generated defconfig: common/arch/arm64/configs/coreshift_gki_defconfig"
+        echo "private.fragment: common/private.fragment"
+        echo "wrapper BUILD_CONFIG: common/build.config.coreshift.gki.aarch64"
+        echo "DEFCONFIG=coreshift_gki_defconfig"
+        if [ "$uses_gki_fragment" = "yes" ]; then
+          echo "GKI_DEFCONFIG_FRAGMENT=common/private.fragment"
+        else
+          echo "GKI_DEFCONFIG_FRAGMENT: not used by legacy build scripts"
+        fi
+
+        echo
         echo "== private.fragment =="
         cat "$FRAGMENT"
-        echo
-
-        "$COMMON_DIR/scripts/kconfig/merge_config.sh" \
-          -m \
-          -r \
-          -O "$OUT_DIR" \
-          "$OUT_DIR/.config" \
-          "$FRAGMENT"
-
-        (
-          cd "$COMMON_DIR"
-          make O="$OUT_DIR" ARCH=arm64 olddefconfig
-        )
-
-        if [ ! -s "$REQUIRED" ]; then
-          echo "private.required is empty; no required config states to print"
-          exit 0
-        fi
 
         echo
-        echo "== final private.required states =="
+        echo "== effective private.fragment for coreshift_gki_defconfig =="
+        cat "$effective_fragment"
 
-        FAIL=0
-        while IFS= read -r line; do
-          [ -n "$line" ] || continue
-          key="${line%%=*}"
-          state="$(grep -E "^${key}=|^# ${key} is not set" "$OUT_DIR/.config" || true)"
+        echo
+        echo "== CONFIG-only diff: gki_defconfig -> coreshift_gki_defconfig =="
+        old_cfg="$(mktemp)"
+        new_cfg="$(mktemp)"
+        grep -E '^(CONFIG_|# CONFIG_.* is not set$)' "$BASE_DEFCONFIG" > "$old_cfg" || true
+        grep -E '^(CONFIG_|# CONFIG_.* is not set$)' "$CORESHIFT_DEFCONFIG" > "$new_cfg" || true
+        diff -u "$old_cfg" "$new_cfg" || true
 
-          if [ -n "$state" ]; then
-            echo "$state"
-          else
-            echo "::warning::$key missing from final .config"
-          fi
-
-          if ! grep -qxF "$line" "$OUT_DIR/.config"; then
-            echo "::warning::$line did not land in final .config"
-            FAIL=1
-          fi
-        done < "$REQUIRED"
-
-        if [ "$FAIL" -ne 0 ] && [ "$STRICT_CONFIG" = "on" ]; then
-          echo "::error::strict_config is on, failing because requested config did not land."
-          exit 1
-        fi
-        EOF
-
-        sed -i 's/^        //' "$SCRIPT"
-        chmod +x "$SCRIPT"
-
-        if grep -q 'POST_DEFCONFIG_CMDS' build/build.sh; then
-          {
-            printf '\n'
-            printf '# Apply workflow private config after base defconfig; keep gki_defconfig untouched.\n'
-            printf 'STRICT_CONFIG="${STRICT_CONFIG:-${{ inputs.strict_config }}}"\n'
-            printf 'POST_DEFCONFIG_CMDS="${POST_DEFCONFIG_CMDS:-} ${GITHUB_WORKSPACE}/kernel/common/scripts/apply_private_fragment.sh"\n'
-          } >> "$COMMON_DIR/build.config.gki.aarch64"
-        else
-          python3 - <<'PY'
-        from pathlib import Path
-
-        path = Path("build/build.sh")
-        text = path.read_text()
-        marker = 'scripts/apply_private_fragment.sh'
-
-        if marker in text:
-            raise SystemExit(0)
-
-        lines = text.splitlines()
-        out = []
-        inserted = False
-
-        for line in lines:
-            out.append(line)
-            stripped = line.strip()
-            if (
-                not inserted
-                and "make" in stripped
-                and "O=" in stripped
-                and "DEFCONFIG" in stripped
-            ):
-                indent = line[: len(line) - len(line.lstrip())]
-                strict_config = "${{ inputs.strict_config }}"
-                script = '"${GITHUB_WORKSPACE}/kernel/common/scripts/apply_private_fragment.sh"'
-                out.extend([
-                    f'{indent}if [ -x {script} ]; then',
-                    indent + '  STRICT_CONFIG="${STRICT_CONFIG:-' + strict_config + '}" ' + script,
-                    f'{indent}fi',
-                ])
-                inserted = True
-
-        if not inserted:
-            raise SystemExit("Unable to patch build/build.sh after defconfig generation")
-
-        path.write_text("\n".join(out) + "\n")
-        PY
-        fi
-
-        echo "== legacy private fragment hook =="
-        grep -n 'POST_DEFCONFIG_CMDS\|apply_private_fragment' "$COMMON_DIR/build.config.gki.aarch64" build/build.sh || true
+        echo
+        echo "== wrapper build config =="
+        cat "$WRAPPER_CONFIG"
