@@ -190,7 +190,7 @@ jobs:
         with:
           kernel_version: ${{ inputs.kernel_version }}
 
-      - name: Generate legacy CoreShift defconfig
+      - name: Install legacy CoreShift build config
         if: inputs.kernel_version == '5.10'
         uses: ./.github/actions/install-legacy-private-fragment
         with:
