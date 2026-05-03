@@ -108,6 +108,7 @@ jobs:
 
           if [ "$BUILD_ENGINE" = "kleaf" ]; then
             unset BUILD_CONFIG
+
             tools/bazel run \
               --lto=${{ inputs.lto }} \
               //common:kernel_aarch64_dist -- \
@@ -124,22 +125,23 @@ jobs:
             bash build/build.sh -j"$JOBS"
           fi
 
-      - name: Extract and print final config
+      - name: Extract final config
         if: always()
         run: |
           set -eux
 
+          rm -rf final-configs
           mkdir -p final-configs
 
           cd kernel
 
           echo "=== Generated .config candidates ==="
-          {
-            find out common/out \
-              -type f \
-              \( -name ".config" -o -name "*.config" -o -name "*kernel*.config" \) \
-              2>/dev/null || true
-          } | sort | tee ../final-configs/generated-config-paths.txt
+          find . \
+            -type f \
+            \( -name ".config" -o -name "*.config" -o -name "*kernel*.config" \) \
+            2>/dev/null \
+            | sort \
+            | tee ../final-configs/generated-config-paths.txt || true
 
           while read -r cfg; do
             [ -f "$cfg" ] || continue
@@ -149,25 +151,25 @@ jobs:
 
           echo
           echo "=== Built Image candidates ==="
-          {
-            find out common/out \
-              -type f \
-              -name Image \
-              2>/dev/null || true
-          } | sort | tee ../final-configs/image-paths.txt
+          find . \
+            -type f \
+            -name Image \
+            2>/dev/null \
+            | sort \
+            | tee ../final-configs/image-paths.txt || true
 
           IMAGE="$(head -n 1 ../final-configs/image-paths.txt || true)"
 
           if [ -n "$IMAGE" ] && [ -f "$IMAGE" ]; then
             echo "Using Image for IKCONFIG extraction: $IMAGE"
 
-            if [ -x common/scripts/extract-ikconfig ]; then
-              common/scripts/extract-ikconfig "$IMAGE" > ../final-configs/final-ikconfig.config || true
-            else
+            if [ -f common/scripts/extract-ikconfig ]; then
               sh common/scripts/extract-ikconfig "$IMAGE" > ../final-configs/final-ikconfig.config || true
+            else
+              echo "::warning::common/scripts/extract-ikconfig not found"
             fi
           else
-            echo "::warning::No Image found for IKCONFIG extraction."
+            echo "::warning::No Image found for IKCONFIG extraction"
           fi
 
           if [ -s ../final-configs/final-ikconfig.config ]; then
@@ -191,8 +193,16 @@ jobs:
             echo "============================================================"
             grep -E 'CONFIG_KSU|CONFIG_SUSFS|CONFIG_KSU_SUSFS|CONFIG_LSM|CONFIG_BBG|CONFIG_SECURITY_SAFESETID|CONFIG_MODULE_SCMVERSION|CONFIG_KPROBES|CONFIG_OVERLAY_FS|CONFIG_TMPFS|CONFIG_FUSE_FS|CONFIG_IKCONFIG' "$FINAL_CFG" || true
           else
-            echo "::warning::No final config available."
+            echo "::warning::No final config available"
           fi
+
+      - name: Upload final config artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-config-${{ inputs.kernel_version }}-${{ inputs.manager }}-susfs-${{ inputs.susfs }}
+          path: final-configs/
+          if-no-files-found: warn
 
       - name: Package kernel
         uses: ./.github/actions/package-kernel
@@ -201,15 +211,14 @@ jobs:
           manager: ${{ inputs.manager }}
           susfs: ${{ inputs.susfs }}
 
-      - name: Upload artifacts
-        if: ${{ always() && inputs.output == 'artifact' }}
+      - name: Upload build artifact
+        if: ${{ inputs.output == 'artifact' }}
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ inputs.kernel_version }}-${{ inputs.manager }}-susfs-${{ inputs.susfs }}
           path: |
             *.zip
             out/Image-*
-            final-configs/
           if-no-files-found: warn
 
       - name: Release
