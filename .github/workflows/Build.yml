@@ -1,0 +1,234 @@
+name: Build Kernel GKI LTS Normal
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        type: choice
+        required: true
+        options: ["5.10", "6.1", "6.6"]
+        default: "5.10"
+
+      manager:
+        type: choice
+        required: true
+        options: ["Vanilla", "KernelSU-Next", "KernelSU", "KowSU", "ResukiSU", "Rissu", "Wild_KSU"]
+        default: "Vanilla"
+
+      manager_ref:
+        type: string
+        required: false
+        default: ""
+
+      susfs:
+        type: choice
+        required: true
+        options: ["off", "on"]
+        default: "off"
+
+      lto:
+        type: choice
+        required: true
+        options: ["thin", "full", "none"]
+        default: "thin"
+
+      output:
+        type: choice
+        required: true
+        options: ["artifact", "release"]
+        default: "artifact"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+
+      - name: Setup variables
+        uses: ./.github/actions/setup-vars
+        with:
+          kernel_version: ${{ inputs.kernel_version }}
+
+      - name: Install repo
+        uses: ./.github/actions/install-repo
+
+      - name: Sync kernel
+        uses: ./.github/actions/sync-kernel
+
+      - name: Init manager
+        if: ${{ inputs.manager != 'Vanilla' }}
+        uses: ./.github/actions/init-manager
+        with:
+          manager: ${{ inputs.manager }}
+          manager_ref: ${{ inputs.manager_ref }}
+          susfs: ${{ inputs.susfs }}
+          kernel_version: ${{ inputs.kernel_version }}
+
+      - name: Apply SUSFS
+        if: ${{ inputs.susfs == 'on' }}
+        uses: ./.github/actions/apply-susfs
+        with:
+          kernel_version: ${{ inputs.kernel_version }}
+          manager: ${{ inputs.manager }}
+
+      - name: Show kernel changes
+        run: |
+          set -eux
+
+          cd kernel/common
+          git status --short
+          git log --oneline -8
+          git diff --stat HEAD~1..HEAD || true
+
+      - name: Build kernel normally
+        run: |
+          set -eux
+
+          cd kernel
+
+          JOBS="$(nproc)"
+          if [ "${{ inputs.lto }}" = "full" ]; then
+            JOBS=1
+          fi
+
+          echo "BUILD_ENGINE=$BUILD_ENGINE"
+          echo "kernel_version=${{ inputs.kernel_version }}"
+          echo "manager=${{ inputs.manager }}"
+          echo "susfs=${{ inputs.susfs }}"
+          echo "lto=${{ inputs.lto }}"
+          echo "jobs=$JOBS"
+
+          if [ "$BUILD_ENGINE" = "kleaf" ]; then
+            unset BUILD_CONFIG
+            tools/bazel run \
+              --lto=${{ inputs.lto }} \
+              //common:kernel_aarch64_dist -- \
+              --dist_dir=out/dist
+          else
+            export BUILD_CONFIG=common/build.config.gki.aarch64
+            export LTO="${{ inputs.lto }}"
+            export SKIP_MRPROPER=1
+            export SKIP_CP_KERNEL_HDRS=1
+            export SKIP_UNSTRIPPED_MODULES=1
+            export SKIP_DEBUG_INFO=1
+
+            echo "selected BUILD_CONFIG=$BUILD_CONFIG"
+            bash build/build.sh -j"$JOBS"
+          fi
+
+      - name: Extract and print final config
+        if: always()
+        run: |
+          set -eux
+
+          mkdir -p final-configs
+
+          cd kernel
+
+          echo "=== Generated .config candidates ==="
+          {
+            find out common/out \
+              -type f \
+              \( -name ".config" -o -name "*.config" -o -name "*kernel*.config" \) \
+              2>/dev/null || true
+          } | sort | tee ../final-configs/generated-config-paths.txt
+
+          while read -r cfg; do
+            [ -f "$cfg" ] || continue
+            safe="$(echo "$cfg" | sed 's#^\./##; s#[/.]#_#g')"
+            cp "$cfg" "../final-configs/${safe}.config"
+          done < ../final-configs/generated-config-paths.txt
+
+          echo
+          echo "=== Built Image candidates ==="
+          {
+            find out common/out \
+              -type f \
+              -name Image \
+              2>/dev/null || true
+          } | sort | tee ../final-configs/image-paths.txt
+
+          IMAGE="$(head -n 1 ../final-configs/image-paths.txt || true)"
+
+          if [ -n "$IMAGE" ] && [ -f "$IMAGE" ]; then
+            echo "Using Image for IKCONFIG extraction: $IMAGE"
+
+            if [ -x common/scripts/extract-ikconfig ]; then
+              common/scripts/extract-ikconfig "$IMAGE" > ../final-configs/final-ikconfig.config || true
+            else
+              sh common/scripts/extract-ikconfig "$IMAGE" > ../final-configs/final-ikconfig.config || true
+            fi
+          else
+            echo "::warning::No Image found for IKCONFIG extraction."
+          fi
+
+          if [ -s ../final-configs/final-ikconfig.config ]; then
+            FINAL_CFG="../final-configs/final-ikconfig.config"
+          else
+            FINAL_CFG="$(find ../final-configs -name '*.config' -type f | sort | head -n 1 || true)"
+          fi
+
+          if [ -n "${FINAL_CFG:-}" ] && [ -f "$FINAL_CFG" ]; then
+            cp "$FINAL_CFG" ../final-configs/final-used.config
+
+            echo
+            echo "============================================================"
+            echo "FINAL CONFIG: $FINAL_CFG"
+            echo "============================================================"
+            cat "$FINAL_CFG"
+
+            echo
+            echo "============================================================"
+            echo "KSU / SUSFS / LSM / IKCONFIG SUMMARY"
+            echo "============================================================"
+            grep -E 'CONFIG_KSU|CONFIG_SUSFS|CONFIG_KSU_SUSFS|CONFIG_LSM|CONFIG_BBG|CONFIG_SECURITY_SAFESETID|CONFIG_MODULE_SCMVERSION|CONFIG_KPROBES|CONFIG_OVERLAY_FS|CONFIG_TMPFS|CONFIG_FUSE_FS|CONFIG_IKCONFIG' "$FINAL_CFG" || true
+          else
+            echo "::warning::No final config available."
+          fi
+
+      - name: Package kernel
+        uses: ./.github/actions/package-kernel
+        with:
+          kernel_version: ${{ inputs.kernel_version }}
+          manager: ${{ inputs.manager }}
+          susfs: ${{ inputs.susfs }}
+
+      - name: Upload artifacts
+        if: ${{ always() && inputs.output == 'artifact' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ inputs.kernel_version }}-${{ inputs.manager }}-susfs-${{ inputs.susfs }}
+          path: |
+            *.zip
+            out/Image-*
+            final-configs/
+          if-no-files-found: warn
+
+      - name: Release
+        if: ${{ inputs.output == 'release' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.FINAL_NAME }}
+          name: ${{ env.FINAL_NAME }}
+          files: |
+            *.zip
+            out/Image-*
+            final-configs/*
+          body: |
+            - Upstream: ${{ env.UPSTREAM_VER }}
+            - Kernel: ${{ inputs.kernel_version }}
+            - Manager: ${{ inputs.manager }}
+            - Manager ref: ${{ inputs.manager_ref }}
+            - SUSFS: ${{ inputs.susfs }}
+            - LTO: ${{ inputs.lto }}
+            - Output: ${{ inputs.output }}
+            - Date: ${{ env.DATE }}
+            - Engine: ${{ env.BUILD_ENGINE }}
