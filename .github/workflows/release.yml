@@ -145,6 +145,12 @@ jobs:
           kernel_version: ${{ matrix.kernel_version }}
           manager: ${{ matrix.manager }}
 
+      - name: Apply Baseband Guard
+        if: matrix.baseband_guard == 'on'
+        uses: ./.github/actions/apply-baseband-guard
+        with:
+          baseband_guard: ${{ matrix.baseband_guard }}
+
       - name: Create private config fragment
         uses: ./.github/actions/create-config-fragment
         with:
