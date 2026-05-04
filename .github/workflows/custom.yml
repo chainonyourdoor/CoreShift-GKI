@@ -289,6 +289,24 @@ jobs:
             out/${{ steps.custom-name.outputs.config_base }}.gz
           if-no-files-found: error
 
+      - name: Stage release zip
+        if: inputs.publish_mode == 'release' || inputs.publish_mode == 'both'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_dir="$PWD/release-staging"
+          zip_path="${{ steps.custom-name.outputs.final_name }}.zip"
+
+          mkdir -p "$release_dir"
+
+          if [ ! -f "$zip_path" ]; then
+            echo "::error::Release requested but no flashable zip was found at $zip_path"
+            exit 1
+          fi
+
+          cp "$zip_path" "$release_dir/"
+
       - name: Write release body
         if: inputs.publish_mode == 'release' || inputs.publish_mode == 'both'
         shell: bash
@@ -315,10 +333,9 @@ jobs:
           - Baseband Guard: ${{ inputs.baseband_guard }}
           - Strict config verification: ${{ inputs.strict_config }}
           - Legacy KMI check: ${{ inputs.legacy_kmi_check }}
-          - Publish mode: ${{ inputs.publish_mode }}
-          - Config exports: ${{ steps.custom-name.outputs.config_base }}.txt, ${{ steps.custom-name.outputs.config_base }}.gz
           - Date: ${DATE}
-          - Engine: ${BUILD_ENGINE}
+
+          Extra build files are available in the workflow artifacts.
           EOF
 
       - name: Create release
@@ -327,9 +344,5 @@ jobs:
         with:
           tag_name: ${{ steps.custom-name.outputs.final_name }}
           name: ${{ steps.custom-name.outputs.final_name }}
-          files: |
-            ${{ steps.custom-name.outputs.final_name }}.zip
-            out/Image-${{ steps.custom-name.outputs.final_name }}
-            out/${{ steps.custom-name.outputs.config_base }}.txt
-            out/${{ steps.custom-name.outputs.config_base }}.gz
+          files: release-staging/*.zip
           body_path: release-body.md

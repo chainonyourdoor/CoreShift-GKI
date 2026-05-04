@@ -314,115 +314,35 @@ jobs:
 
           date="$(date +'%Y%m%d')"
           tag="coreshift-gki-${date}-${GITHUB_RUN_NUMBER}"
-          release_dir="$PWD/release-files"
+          release_dir="$PWD/release-zips"
           body="$PWD/release-body.md"
 
           mkdir -p "$release_dir"
 
-          find release-artifacts -type f \( -name '*.zip' -o -name 'Image-*' -o -name 'config-*' \) -print0 |
+          find release-artifacts -type f -name '*.zip' -print0 |
             while IFS= read -r -d '' file; do
               cp "$file" "$release_dir/$(basename "$file")"
             done
 
-          if ! find "$release_dir" -type f -print -quit | grep -q .; then
-            echo "::error::No build artifacts found for release."
+          if ! find "$release_dir" -type f -name '*.zip' -print -quit | grep -q .; then
+            echo "::error::Release requested but no flashable zip files were found."
             exit 1
           fi
 
           {
-            echo "Coreshift GKI release matrix"
+            echo "CoreShift GKI release"
             echo
-            declare -A labels=(
-              [lto]="LTO"
-              [ikconfig]="IKCONFIG"
-              [container_core]="Container core"
-              [container_ipc]="Container IPC"
-              [mount_filesystems]="Mount filesystems"
-              [container_networking]="Container networking"
-              [fq_codel_features]="FQ/FQ_CODEL features"
-              [performance_features]="Performance features"
-              [debug_features]="Debug features"
-              [heavy_debug_features]="Heavy debug features"
-              [baseband_guard]="Baseband Guard"
-              [strict_config]="Strict config verification"
-              [legacy_kmi_check]="Legacy KMI check"
-            )
-
-            for key in \
-              lto \
-              ikconfig \
-              container_core \
-              container_ipc \
-              mount_filesystems \
-              container_networking \
-              fq_codel_features \
-              performance_features \
-              debug_features \
-              heavy_debug_features \
-              baseband_guard \
-              strict_config \
-              legacy_kmi_check
-            do
-              values="$(
-                while IFS= read -r manifest; do
-                  sed -n "s/^${key}=//p" "$manifest"
-                done < <(find release-artifacts -type f -name release-manifest.txt | sort) |
-                sort -u
-              )"
-
-              if [ "$(printf '%s\n' "$values" | sed '/^$/d' | wc -l)" -eq 1 ]; then
-                echo "- ${labels[$key]}: $values"
-              else
-                echo "- ${labels[$key]}: varies"
-                while IFS= read -r manifest; do
-                  kernel_version="$(sed -n 's/^kernel_version=//p' "$manifest")"
-                  manager="$(sed -n 's/^manager=//p' "$manifest")"
-                  susfs="$(sed -n 's/^susfs=//p' "$manifest")"
-                  value="$(sed -n "s/^${key}=//p" "$manifest")"
-                  printf '  - %s / %s / SUSFS %s: %s\n' "$kernel_version" "$manager" "$susfs" "$value"
-                done < <(find release-artifacts -type f -name release-manifest.txt | sort)
-              fi
-            done
-
-            echo "- Date: $date"
+            echo "Flashable zip files are attached here."
+            echo "Other build outputs are available in the workflow artifacts."
             echo
 
-            for version in 5.10 6.1 6.6; do
-              echo "## $version"
-
-              version_lines="$(
-                while IFS= read -r manifest; do
-                  kernel_version="$(sed -n 's/^kernel_version=//p' "$manifest")"
-                  manager="$(sed -n 's/^manager=//p' "$manifest")"
-                  susfs="$(sed -n 's/^susfs=//p' "$manifest")"
-                  if [ "$kernel_version" = "$version" ]; then
-                    printf -- '- %s: SUSFS %s\n' "$manager" "$susfs"
-                  fi
-                done < <(find release-artifacts -type f -name release-manifest.txt | sort) |
-                sort
-              )"
-
-              if [ -n "$version_lines" ]; then
-                printf '%s\n' "$version_lines"
-              else
-                echo "- No artifacts produced"
-              fi
-
-              config_lines="$(
-                find release-artifacts -type f \
-                  \( -name "config-${version}-*.txt" -o -name "config-${version}-*.gz" \) \
-                  -printf '%f\n' |
-                sort
-              )"
-
-              if [ -n "$config_lines" ]; then
-                echo
-                echo "Config exports:"
-                printf '%s\n' "$config_lines" | sed 's/^/- /'
-              fi
-
-              echo
-            done
+            while IFS= read -r manifest; do
+              kernel_version="$(sed -n 's/^kernel_version=//p' "$manifest")"
+              manager="$(sed -n 's/^manager=//p' "$manifest")"
+              susfs="$(sed -n 's/^susfs=//p' "$manifest")"
+              name="$(sed -n 's/^name=//p' "$manifest")"
+              printf -- '- %s / %s / SUSFS %s: %s.zip\n' "$kernel_version" "$manager" "$susfs" "$name"
+            done < <(find release-artifacts -type f -name release-manifest.txt | sort)
           } > "$body"
 
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
@@ -439,5 +359,5 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
-          files: release-files/*
+          files: release-zips/*.zip
           body_path: ${{ env.RELEASE_BODY }}

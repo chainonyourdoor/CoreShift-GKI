@@ -33,6 +33,12 @@ on:
         required: true
         options: ["on", "off"]
         default: "off"
+      publish_mode:
+        description: "Choose where the build is uploaded"
+        type: choice
+        required: true
+        options: ["artifact", "release"]
+        default: "artifact"
 
 jobs:
   build:
@@ -56,7 +62,7 @@ jobs:
       HEAVY_DEBUG_FEATURES: "off"
       STRICT_CONFIG: "on"
       LEGACY_KMI_CHECK: "on"
-      PUBLISH_MODE: "artifact"
+      PUBLISH_MODE: ${{ inputs.publish_mode }}
 
     steps:
       - name: Validate inputs
@@ -212,7 +218,7 @@ jobs:
           final_name: ${{ steps.build-name.outputs.final_name }}
 
       - name: Stage artifact outputs
-        if: env.PUBLISH_MODE == 'artifact' || env.PUBLISH_MODE == 'both'
+        if: env.PUBLISH_MODE == 'artifact'
         shell: bash
         run: |
           set -euo pipefail
@@ -222,7 +228,7 @@ jobs:
           cp "out/Image-${FINAL_NAME}" image-artifact/
 
       - name: Upload flashable artifact tree
-        if: env.PUBLISH_MODE == 'artifact' || env.PUBLISH_MODE == 'both'
+        if: env.PUBLISH_MODE == 'artifact'
         uses: actions/upload-artifact@v4
         with:
           name: flashable-${{ inputs.kernel_version }}-${{ inputs.manager }}${{ steps.build-name.outputs.variant_suffix }}-${{ steps.build-name.outputs.date }}
@@ -230,7 +236,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload raw Image artifact
-        if: env.PUBLISH_MODE == 'artifact' || env.PUBLISH_MODE == 'both'
+        if: env.PUBLISH_MODE == 'artifact'
         uses: actions/upload-artifact@v4
         with:
           name: image-${{ inputs.kernel_version }}-${{ inputs.manager }}${{ steps.build-name.outputs.variant_suffix }}-${{ steps.build-name.outputs.date }}
@@ -238,7 +244,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload config artifact
-        if: env.PUBLISH_MODE == 'artifact' || env.PUBLISH_MODE == 'both'
+        if: env.PUBLISH_MODE == 'artifact'
         uses: actions/upload-artifact@v4
         with:
           name: config-${{ inputs.kernel_version }}-${{ inputs.manager }}${{ steps.build-name.outputs.variant_suffix }}-${{ steps.build-name.outputs.date }}
@@ -247,8 +253,26 @@ jobs:
             out/${{ steps.build-name.outputs.config_base }}.gz
           if-no-files-found: error
 
+      - name: Stage release zip
+        if: env.PUBLISH_MODE == 'release'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_dir="$PWD/release-staging"
+          zip_path="${{ steps.build-name.outputs.final_name }}.zip"
+
+          mkdir -p "$release_dir"
+
+          if [ ! -f "$zip_path" ]; then
+            echo "::error::Release requested but no flashable zip was found at $zip_path"
+            exit 1
+          fi
+
+          cp "$zip_path" "$release_dir/"
+
       - name: Write release body
-        if: env.PUBLISH_MODE == 'release' || env.PUBLISH_MODE == 'both'
+        if: env.PUBLISH_MODE == 'release'
         shell: bash
         run: |
           set -euo pipefail
@@ -262,32 +286,16 @@ jobs:
           - SUSFS4KSU: ${{ inputs.susfs }}
           - Baseband Guard: ${{ inputs.baseband_guard }}
           - LTO: ${{ inputs.lto }}
-          - IKCONFIG: ${{ env.IKCONFIG }}
-          - Container core: ${{ env.CONTAINER_CORE }}
-          - Container IPC: ${{ env.CONTAINER_IPC }}
-          - Mount filesystems: ${{ env.MOUNT_FILESYSTEMS }}
-          - Container networking: ${{ env.CONTAINER_NETWORKING }}
-          - FQ/FQ_CODEL features: ${{ env.FQ_CODEL_FEATURES }}
-          - Performance features: ${{ env.PERFORMANCE_FEATURES }}
-          - Debug features: ${{ env.DEBUG_FEATURES }}
-          - Heavy debug features: ${{ env.HEAVY_DEBUG_FEATURES }}
-          - Strict config verification: ${{ env.STRICT_CONFIG }}
-          - Legacy KMI check: ${{ env.LEGACY_KMI_CHECK }}
-          - Publish mode: ${{ env.PUBLISH_MODE }}
-          - Config exports: ${{ steps.build-name.outputs.config_base }}.txt, ${{ steps.build-name.outputs.config_base }}.gz
           - Date: ${DATE}
-          - Engine: ${BUILD_ENGINE}
+
+          Extra build files are available in the workflow artifacts.
           EOF
 
       - name: Create release
-        if: env.PUBLISH_MODE == 'release' || env.PUBLISH_MODE == 'both'
+        if: env.PUBLISH_MODE == 'release'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.build-name.outputs.final_name }}
           name: ${{ steps.build-name.outputs.final_name }}
-          files: |
-            ${{ steps.build-name.outputs.final_name }}.zip
-            out/Image-${{ steps.build-name.outputs.final_name }}
-            out/${{ steps.build-name.outputs.config_base }}.txt
-            out/${{ steps.build-name.outputs.config_base }}.gz
+          files: release-staging/*.zip
           body_path: release-body.md
