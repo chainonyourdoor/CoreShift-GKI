@@ -2,34 +2,27 @@
 
 # CoreShift-GKI
 
-Build and flash custom Android GKI LTS kernels with GitHub Actions.
+CoreShift-GKI is a GitHub Actions-based Android GKI LTS kernel builder.
 
-CoreShift-GKI gives Android power users a simple way to build a flashable
-custom GKI kernel with optional root, container, SUSFS, and security features.
-You pick the options in GitHub Actions, wait for the build, then download the
-generated kernel package.
+It helps you build flashable custom GKI kernels without setting up a full Android kernel build environment locally. You choose a kernel family, root manager, and optional features in GitHub Actions, then download the generated output.
 
-## What This Is
+> Custom kernels can bootloop your device. Use this only if you know how to recover with recovery or fastboot.
 
-CoreShift-GKI is a GitHub Actions-based custom Android GKI LTS kernel builder.
+## What CoreShift-GKI Builds
 
-It is meant for users who want a custom kernel without setting up a full Android
-kernel build environment on their own computer.
+CoreShift-GKI can build Android GKI LTS kernels for supported Android kernel families and package them into flashable AnyKernel zip files.
 
-## Who This Is For
-
-This repo is for:
+It is designed for:
 
 - Android power users
 - Root users
 - Custom ROM users
-- Users who want to test a custom GKI kernel
-- Users who understand how to recover from a bad kernel flash
+- Kernel testers
+- Users who can recover from a bad kernel flash
 
-CoreShift-GKI cannot guarantee that every build will boot on every device or
-ROM.
+It is not a universal compatibility layer. A build that boots on one device, ROM, or Android version may not boot on another.
 
-## Supported Kernels
+## Supported Kernel Families
 
 | Android GKI family | Kernel version |
 | --- | --- |
@@ -37,120 +30,139 @@ ROM.
 | Android 14 GKI | `6.1` |
 | Android 15 GKI | `6.6` |
 
-Your selected GKI version must match your device and ROM family.
+Your selected GKI version must match your device and ROM.
 
 ## Supported Root Manager Choices
 
 | Choice | Meaning |
 | --- | --- |
 | `Vanilla` | No root manager |
-| `KernelSU` | KernelSU manager support |
-| `KernelSU-Next` | KernelSU-Next manager support |
-| `KowSU` | KowSU manager support |
-| `ResukiSU` | ResukiSU manager support |
-| `Rissu` | Rissu manager support |
-| `Wild_KSU` | Wild_KSU manager support |
+| `KernelSU` | KernelSU support |
+| `KernelSU-Next` | KernelSU-Next support |
+| `KowSU` | KowSU support |
+| `ResukiSU` | ResukiSU support |
+| `Rissu` | Rissu support |
+| `Wild_KSU` | Wild_KSU support |
+
+For your first root build, choose one manager and keep advanced features off. Confirm the kernel boots before enabling SUSFS or other extra features.
+
+## Build Workflows
+
+| Workflow | Purpose |
+| --- | --- |
+| **Custom Kernel Build** | Build one custom kernel with selected options. |
+| **Build Kernel Release Matrix** | Build the curated release set. |
+| **Build Kernel** | Build a simpler, less experimental kernel with fewer options. |
+
+Most users should start with **Build Kernel** or **Custom Kernel Build**.
 
 ## Quick Start
 
-1. Fork this repo.
+1. Fork this repository.
 2. Open the **Actions** tab in your fork.
-3. Run **Custom Kernel Build** for one build, or **Build Kernel Release Matrix**
-   for the curated release set.
-4. Pick your kernel version and options.
-5. Wait for the release to finish.
-6. Download the flashable AnyKernel zip.
-7. Flash only if you know how to recover your device.
+3. Choose a workflow.
+4. Select your kernel version, manager, and options.
+5. Run the workflow.
+6. Download the generated AnyKernel zip or artifact.
+7. Flash only after confirming you selected the correct GKI version for your device.
 
-## Recommended Choices
+## Recommended Starting Points
 
 | Goal | Recommended settings |
 | --- | --- |
-| First build | `Vanilla`, thin LTO, all advanced options off |
-| Root build | Choose one manager, leave SUSFS off first |
-| Container build | Enable `container_core` and `mount_filesystems` first |
-| Advanced build | Try SUSFS or Baseband Guard only after a basic build boots |
+| First test build | `Vanilla`, thin LTO, advanced options off |
+| First root build | One root manager, SUSFS off, BBG off |
+| SUSFS build | Confirm the same manager boots first, then enable SUSFS |
+| BBG build | Confirm the non-BBG build boots first, then enable BBG |
+| Debug build | Enable debug features only when troubleshooting |
 
-Start small. Confirm a basic build boots before adding advanced features.
+Start small. Boot a basic build first, then add one advanced feature at a time.
 
 ## Option Guide
 
-| Option | Plain-language meaning |
+| Option | Meaning |
 | --- | --- |
-| `lto` | Build optimization. `thin` is recommended. |
-| `ikconfig` | Lets you check the running kernel config from Android. |
-| `container_core` | Basic Linux container support. |
-| `container_ipc` | Extra IPC features for containers. More experimental. |
-| `mount_filesystems` | OverlayFS, FUSE, and tmpfs helpers. |
-| `container_networking` | Bridge, NAT, and VETH networking. Advanced. |
-| `fq_codel_features` | Extra network queue options. |
-| `performance_features` | Performance-oriented kernel options. |
-| `susfs` | Root hiding and spoofing support. Advanced and risky. |
-| `baseband_guard` | Extra protection feature. Advanced. |
-| `debug_features` | Troubleshooting features. Not needed for normal use. |
-| `heavy_debug_features` | Heavy troubleshooting options. Not for daily use. |
-| `strict_config` | Fails the build if requested options are missing. |
+| `kernel_version` | Target Android GKI family: `5.10`, `6.1`, or `6.6`. |
+| `manager` | Root manager integration. Use `Vanilla` for no root manager. |
+| `manager_ref` | Optional manager git ref, commit, or tag for advanced testing. |
+| `lto` | Link-time optimization. `thin` is the safest default. |
+| `susfs` | SUSFS4KSU support. Advanced root-hiding/spoofing feature. |
+| `baseband_guard` | Baseband Guard support. Advanced protection feature. |
+| `container_features` | Enables container-related kernel options in custom builds. |
+| `performance_features` | Enables performance-oriented options. Use only when needed. |
+| `debug_features` | Enables debugging/tracing options. Not needed for normal use. |
+| `strict_config` | Fails the build if required config options are missing. |
+| `legacy_kmi_check` | Controls the legacy 5.10 KMI check behavior. |
+| `publish_mode` | Chooses release output, artifact output, or both. |
 
-## Safety First
+Some workflows intentionally show fewer options to keep normal builds simpler and safer.
 
-Custom kernels can bootloop.
+## Safety Checklist
 
-Before flashing:
+Before flashing any build:
 
-- Back up your current `boot`, `init_boot`, and `vendor_boot` images when your
-  device uses them.
-- Keep a known-good kernel or ROM package ready.
+- Back up your current `boot`, `init_boot`, and `vendor_boot` images if your device uses them.
+- Keep a known-good kernel, boot image, or ROM package ready.
 - Know how to use recovery or fastboot.
-- Do not test advanced options first.
-- Do not flash a kernel built for the wrong GKI version.
+- Confirm your device uses the selected GKI kernel family.
+- Test a basic build before enabling SUSFS, BBG, container, performance, or debug features.
+- Do not flash builds meant for a different Android/GKI family.
 
-Flash at your own risk. This project helps build kernels, but it cannot make a
-kernel universally safe or compatible.
+Flash at your own risk.
 
 ## Compatibility Notes
 
-Your device, ROM, Android version, and GKI kernel family must match. A kernel
-that works on one ROM or device may fail on another.
+CoreShift-GKI builds Android GKI kernels, but compatibility still depends on your device, ROM, vendor modules, boot image layout, and Android version.
 
-If you are unsure which GKI version your device uses, check your ROM or device
-documentation before building.
+A kernel may fail to boot if:
 
-SUSFS and Baseband Guard are advanced options. Build and boot a basic kernel
-first, then test these features separately.
+- The selected GKI version does not match your ROM.
+- Vendor modules are incompatible.
+- The boot image layout differs from what the package expects.
+- A root manager or advanced patch is incompatible with your kernel family.
+- SUSFS or BBG changes conflict with your device or ROM.
+
+When testing, change one thing at a time.
 
 ## Outputs
 
-Custom builds support three publish modes:
+Custom builds can publish outputs in three modes:
 
-- `release` creates a GitHub release containing the exact flashable AnyKernel
-  zip and raw `Image`.
-- `artifact` uploads a staged AnyKernel directory. GitHub downloads artifacts as
-  zip files, so use the downloaded artifact zip directly as the flashable
-  package.
-- `both` creates the release and uploads the staged artifacts.
+| Mode | Output |
+| --- | --- |
+| `artifact` | Uploads build artifacts through GitHub Actions. |
+| `release` | Creates a GitHub release. |
+| `both` | Uploads artifacts and creates a release. |
 
-Uploading an existing flashable zip as a GitHub artifact creates a zip inside a
-zip. Artifact mode avoids that by staging the flashable tree instead.
+Typical outputs include:
 
-Release-mode and matrix runs publish:
+- Flashable AnyKernel zip
+- Raw kernel `Image`
+- Exported kernel config
 
-- A flashable AnyKernel zip
-- A raw kernel `Image`
+Most users should flash the **AnyKernel zip**, not the raw `Image`.
 
-Most users should flash the AnyKernel zip, not the raw `Image`.
+### Artifact Note
+
+GitHub downloads artifacts as zip files. To avoid a zip-inside-zip problem, artifact mode may upload a staged AnyKernel tree instead of uploading an already zipped package.
 
 ## Troubleshooting
 
 | Problem | What to try |
 | --- | --- |
 | Build failed | Re-run with fewer options. Start from `Vanilla` and thin LTO. |
-| Device bootloops | Restore boot images or flash a known-good kernel. |
-| Full LTO build was killed | Use thin LTO. Full LTO needs much more memory. |
+| Device bootloops | Restore your boot images or flash a known-good kernel. |
+| Full LTO build was killed | Use thin LTO. Full LTO needs more memory. |
+| Root manager is not detected | Build the manager without SUSFS first, then test SUSFS separately. |
+| SUSFS does not work | Confirm the same manager boots without SUSFS first. |
+| BBG causes issues | Test the same build with BBG off, then compare logs. |
 | Feature does not work | Rebuild with only that feature enabled. |
-| Wrong kernel version | Rebuild with the GKI version for your ROM/device. |
-| Root manager problem | Try a basic manager build first, without SUSFS. |
+| Wrong kernel version | Rebuild with the GKI version used by your ROM/device. |
+
+## Recovery Reminder
+
+A successful build does not guarantee a successful boot. Keep recovery access ready before flashing.
 
 ## License
 
-This project is licensed under the Mozilla Public License 2.0. See
-[LICENSE](LICENSE).
+This project is licensed under the Mozilla Public License 2.0. See [LICENSE](LICENSE).
