@@ -20,12 +20,6 @@ runs:
         COMPILER_INFO="${GITHUB_WORKSPACE}/compiler-version.txt"
         LOG_FILE="${TOOLCHAIN_BASE}/clang-override.log"
         AOSP_CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86"
-        SEARCHED_ROOTS="
-        ${GITHUB_WORKSPACE}/kernel/prebuilts/clang/host/linux-x86
-        ${GITHUB_WORKSPACE}/kernel/prebuilts-master/clang/host/linux-x86
-        ${GITHUB_WORKSPACE}/prebuilts/clang/host/linux-x86
-        ${GITHUB_WORKSPACE}/prebuilts-master/clang/host/linux-x86
-        "
 
         mkdir -p "$TOOLCHAIN_BASE"
 
@@ -33,14 +27,25 @@ runs:
           local selected_root="${1:-}"
           local selected_target="${2:-}"
           local candidates_text="${3:-}"
+          local broad_scan="${4:-}"
 
           echo "== clang discovery debug ==" >&2
           echo "workspace=$GITHUB_WORKSPACE" >&2
           echo "searched_roots:" >&2
-          printf '%s\n' $SEARCHED_ROOTS >&2
+          printf '%s\n' \
+            "${GITHUB_WORKSPACE}/kernel/prebuilts/clang/host/linux-x86" \
+            "${GITHUB_WORKSPACE}/kernel/prebuilts-master/clang/host/linux-x86" \
+            "${GITHUB_WORKSPACE}/prebuilts/clang/host/linux-x86" \
+            "${GITHUB_WORKSPACE}/prebuilts-master/clang/host/linux-x86" >&2
           echo "found_clang_candidates:" >&2
           if [ -n "$candidates_text" ]; then
             printf '%s\n' "$candidates_text" >&2
+          else
+            echo "(none)" >&2
+          fi
+          echo "kernel_broad_scan:" >&2
+          if [ -n "$broad_scan" ]; then
+            printf '%s\n' "$broad_scan" >&2
           else
             echo "(none)" >&2
           fi
@@ -49,12 +54,18 @@ runs:
         }
 
         find_clang_root_and_target() {
-          local root
-          local candidate
-          local candidate_dir
+          local root=""
+          local candidate=""
+          local candidate_dir=""
           local candidates_text=""
+          local broad_scan=""
+          local line=""
 
-          for root in $SEARCHED_ROOTS; do
+          for root in \
+            "${GITHUB_WORKSPACE}/kernel/prebuilts/clang/host/linux-x86" \
+            "${GITHUB_WORKSPACE}/kernel/prebuilts-master/clang/host/linux-x86" \
+            "${GITHUB_WORKSPACE}/prebuilts/clang/host/linux-x86" \
+            "${GITHUB_WORKSPACE}/prebuilts-master/clang/host/linux-x86"; do
             if [ ! -d "$root" ]; then
               continue
             fi
@@ -79,9 +90,34 @@ runs:
             return 0
           done
 
-          print_debug "" "" "$candidates_text"
-          echo "::error::Unable to detect a synced Clang toolchain directory"
-          exit 1
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            broad_scan="${broad_scan}${line}"$'\n'
+
+            if [ -n "$candidate" ]; then
+              continue
+            fi
+
+            case "$line" in
+              */clang-r*/bin/clang)
+                root="$(dirname "$(dirname "$(dirname "$line")")")"
+                candidate_dir="$(dirname "$(dirname "$line")")"
+                candidate="$line"
+                ;;
+            esac
+          done < <(
+            find "$GITHUB_WORKSPACE/kernel" -maxdepth 7 -type f -path "*/bin/clang" -print 2>/dev/null || true
+          )
+
+          if [ -n "$candidate" ]; then
+            candidates_text="${candidates_text}${candidate}"$'\n'
+            print_debug "$root" "$candidate_dir" "$candidates_text" "$broad_scan"
+            printf '%s\n%s\n' "$root" "$candidate_dir"
+            return 0
+          fi
+
+          print_debug "" "" "$candidates_text" "$broad_scan"
+          return 1
         }
 
         write_metadata() {
@@ -108,29 +144,51 @@ runs:
           } | tee "$COMPILER_INFO" > "$LOG_FILE"
         }
 
-        mapfile -t DETECTED_PATHS < <(find_clang_root_and_target)
-        if [ "${#DETECTED_PATHS[@]}" -lt 2 ]; then
-          echo "::error::Clang discovery did not return the expected root and target"
-          exit 1
-        fi
-        CLANG_ROOT="${DETECTED_PATHS[-2]}"
-        TARGET_CLANG_DIR="${DETECTED_PATHS[-1]}"
-        TARGET_CLANG_NAME="$(basename "$TARGET_CLANG_DIR")"
-        BACKUP_CLANG_DIR="${TARGET_CLANG_DIR}.original"
-        ACTIVE_CLANG_DIR="$TARGET_CLANG_DIR"
-
-        if [ "$CHOICE" = "default" ]; then
-          CLANG_BIN="$TARGET_CLANG_DIR/bin/clang"
-          LLD_BIN="$TARGET_CLANG_DIR/bin/ld.lld"
-
-          if [ ! -x "$CLANG_BIN" ] || [ ! -x "$LLD_BIN" ]; then
-            print_debug "$CLANG_ROOT" "$TARGET_CLANG_DIR" "$CLANG_BIN"$'\n'"$LLD_BIN"
-            echo "::error::Default synced Clang is missing expected binaries under $TARGET_CLANG_DIR"
+        DETECTED_PATHS=()
+        if mapfile -t DETECTED_PATHS < <(find_clang_root_and_target); then
+          if [ "${#DETECTED_PATHS[@]}" -lt 2 ]; then
+            echo "::error::Clang discovery did not return the expected root and target"
             exit 1
           fi
+          CLANG_ROOT="${DETECTED_PATHS[-2]}"
+          TARGET_CLANG_DIR="${DETECTED_PATHS[-1]}"
+          TARGET_CLANG_NAME="$(basename "$TARGET_CLANG_DIR")"
+          BACKUP_CLANG_DIR="${TARGET_CLANG_DIR}.original"
+          ACTIVE_CLANG_DIR="$TARGET_CLANG_DIR"
+        else
+          CLANG_ROOT=""
+          TARGET_CLANG_DIR=""
+          TARGET_CLANG_NAME=""
+          BACKUP_CLANG_DIR=""
+          ACTIVE_CLANG_DIR=""
+        fi
 
-          echo "== default synced Clang =="
-          echo "target_dir=$TARGET_CLANG_DIR"
+        if [ "$CHOICE" = "default" ]; then
+          if [ -n "$TARGET_CLANG_DIR" ]; then
+            CLANG_BIN="$TARGET_CLANG_DIR/bin/clang"
+            LLD_BIN="$TARGET_CLANG_DIR/bin/ld.lld"
+
+            if [ ! -x "$CLANG_BIN" ] || [ ! -x "$LLD_BIN" ]; then
+              echo "::error::Detected synced Clang directory is missing expected binaries under $TARGET_CLANG_DIR"
+              exit 1
+            fi
+
+            echo "== default synced Clang =="
+            echo "target_dir=$TARGET_CLANG_DIR"
+          else
+            CLANG_BIN="$(command -v clang || true)"
+            LLD_BIN="$(command -v ld.lld || true)"
+
+            if [ -z "$CLANG_BIN" ] || [ -z "$LLD_BIN" ]; then
+              echo "::error::No repo-synced Clang directory was found and PATH clang/ld.lld are unavailable"
+              exit 1
+            fi
+
+            echo "== default PATH Clang =="
+            echo "target_dir=<none>"
+            ACTIVE_CLANG_DIR="$(dirname "$(dirname "$CLANG_BIN")")"
+          fi
+
           "$CLANG_BIN" --version
 
           {
@@ -144,6 +202,11 @@ runs:
 
           write_metadata "default" "$ACTIVE_CLANG_DIR" "$TARGET_CLANG_DIR" "" "$CLANG_BIN" "$LLD_BIN"
           exit 0
+        fi
+
+        if [ -z "$TARGET_CLANG_DIR" ]; then
+          echo "::error::This branch/build path does not expose a repo-synced Clang directory under $GITHUB_WORKSPACE/kernel, so symlink override is unavailable."
+          exit 1
         fi
 
         rm -rf "$AOSP_CLANG_DIR"

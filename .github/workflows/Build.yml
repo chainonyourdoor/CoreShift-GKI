@@ -136,14 +136,17 @@ jobs:
 
       - name: Sync source
         uses: ./.github/actions/sync-kernel
-        with:
-          source_repo: ${{ inputs.source_repo }}
-          source_ref: ${{ inputs.source_ref }}
 
       - name: Select Clang
         uses: ./.github/actions/select-clang
         with:
           clang_version: ${{ inputs.clang_version }}
+
+      - name: Replace kernel/common source
+        uses: ./.github/actions/replace-common-source
+        with:
+          source_repo: ${{ inputs.source_repo }}
+          source_ref: ${{ inputs.source_ref }}
 
       - name: Init manager
         if: inputs.manager != 'Vanilla'

@@ -1,0 +1,57 @@
+name: Replace common source
+description: Optionally replace kernel/common after repo sync and toolchain selection.
+
+inputs:
+  source_repo:
+    required: false
+    default: ""
+    description: Optional git repo URL used to replace kernel/common.
+  source_ref:
+    required: false
+    default: ""
+    description: Optional git ref, tag, branch, or commit for the replacement source.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+
+        SOURCE_REPO="${{ inputs.source_repo }}"
+        SOURCE_REF="${{ inputs.source_ref }}"
+        COMMON_DIR="${GITHUB_WORKSPACE}/kernel/common"
+
+        if [ -z "$SOURCE_REPO" ]; then
+          if [ -n "$SOURCE_REF" ]; then
+            echo "::error::source_ref was provided without source_repo"
+            exit 1
+          fi
+
+          echo "== replace kernel/common source =="
+          echo "source_repo not set; keeping repo-synced kernel/common"
+          exit 0
+        fi
+
+        echo "== replace kernel/common source =="
+        echo "source_repo=$SOURCE_REPO"
+        echo "source_ref=${SOURCE_REF:-default-head}"
+
+        rm -rf "$COMMON_DIR"
+
+        if [ -z "$SOURCE_REF" ]; then
+          git clone --depth=1 --no-tags "$SOURCE_REPO" "$COMMON_DIR"
+        elif git clone --depth=1 --branch "$SOURCE_REF" --no-tags "$SOURCE_REPO" "$COMMON_DIR"; then
+          :
+        else
+          git clone --depth=1 --no-tags "$SOURCE_REPO" "$COMMON_DIR"
+
+          if git -C "$COMMON_DIR" checkout --detach "$SOURCE_REF"; then
+            :
+          else
+            git -C "$COMMON_DIR" fetch --depth=1 origin "$SOURCE_REF" || git -C "$COMMON_DIR" fetch origin "$SOURCE_REF"
+            git -C "$COMMON_DIR" checkout --detach FETCH_HEAD
+          fi
+        fi
+
+        echo "replacement HEAD: $(git -C "$COMMON_DIR" rev-parse HEAD)"
