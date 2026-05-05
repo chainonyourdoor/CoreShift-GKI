@@ -25,6 +25,11 @@ on:
         description: "Optional source git ref/branch/tag/commit"
         required: false
         default: ""
+      clang_version:
+        type: choice
+        required: true
+        options: ["default", "clang-r584948", "clang-r547379"]
+        default: "default"
       lto:
         type: choice
         required: true
@@ -135,6 +140,11 @@ jobs:
           source_repo: ${{ inputs.source_repo }}
           source_ref: ${{ inputs.source_ref }}
 
+      - name: Select Clang
+        uses: ./.github/actions/select-clang
+        with:
+          clang_version: ${{ inputs.clang_version }}
+
       - name: Init manager
         if: inputs.manager != 'Vanilla'
         uses: ./.github/actions/init-manager
@@ -236,6 +246,7 @@ jobs:
 
           mkdir -p artifact-root image-artifact
           cp -a ak3_work/. artifact-root/
+          cp compiler-version.txt artifact-root/
           cp "out/Image-${FINAL_NAME}" image-artifact/
 
       - name: Upload flashable artifact tree
@@ -260,6 +271,7 @@ jobs:
         with:
           name: config-${{ inputs.kernel_version }}-${{ inputs.manager }}${{ steps.build-name.outputs.variant_suffix }}-${{ steps.build-name.outputs.date }}
           path: |
+            compiler-version.txt
             out/${{ steps.build-name.outputs.config_base }}.txt
             out/${{ steps.build-name.outputs.config_base }}.gz
           if-no-files-found: error

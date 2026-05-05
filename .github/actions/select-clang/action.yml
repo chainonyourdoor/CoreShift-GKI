@@ -1,0 +1,202 @@
+name: Select Clang
+description: Replace the synced kernel Clang prebuilts directory with a curated AOSP Clang symlink.
+
+inputs:
+  clang_version:
+    required: true
+    description: Curated Clang version to use, or default for the repo-synced toolchain.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+
+        CHOICE="${{ inputs.clang_version }}"
+        KERNEL_DIR="${GITHUB_WORKSPACE}/kernel"
+        TOOLCHAIN_BASE="${GITHUB_WORKSPACE}/.toolchains"
+        AOSP_CLANG_DIR="${TOOLCHAIN_BASE}/aosp-clang"
+        COMPILER_INFO="${GITHUB_WORKSPACE}/compiler-version.txt"
+        LOG_FILE="${TOOLCHAIN_BASE}/clang-override.log"
+        AOSP_CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86"
+
+        mkdir -p "$TOOLCHAIN_BASE"
+
+        find_clang_root() {
+          local root
+          local -a roots
+
+          if [ -d "$KERNEL_DIR/prebuilts/clang/host/linux-x86" ]; then
+            printf '%s\n' "$KERNEL_DIR/prebuilts/clang/host/linux-x86"
+            return 0
+          fi
+
+          mapfile -t roots < <(
+            find "$KERNEL_DIR" -type d -path '*/prebuilts/clang/host/linux-x86' | sort
+          )
+
+          if [ "${#roots[@]}" -eq 1 ]; then
+            printf '%s\n' "${roots[0]}"
+            return 0
+          fi
+
+          echo "::error::Unable to determine the synced Clang prebuilts root"
+          if [ "${#roots[@]}" -gt 1 ]; then
+            printf '%s\n' "${roots[@]}"
+          fi
+          exit 1
+        }
+
+        find_clang_dir() {
+          local root="$1"
+          local -a candidates
+          local -a search_paths
+          local -a referenced
+          local -a matches
+          local candidate
+          local ref
+
+          mapfile -t candidates < <(
+            find "$root" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) \
+              -name 'clang-r*' ! -name '*.original' | sort
+          )
+
+          if [ "${#candidates[@]}" -eq 1 ]; then
+            printf '%s\n' "${candidates[0]}"
+            return 0
+          fi
+
+          search_paths=()
+          if [ -d "$KERNEL_DIR/build" ]; then
+            search_paths+=("$KERNEL_DIR/build")
+          fi
+          if [ -d "$KERNEL_DIR/common" ]; then
+            search_paths+=("$KERNEL_DIR/common")
+          fi
+
+          if [ "${#search_paths[@]}" -gt 0 ]; then
+            mapfile -t referenced < <(
+              grep -RhoE 'clang-r[0-9]+' "${search_paths[@]}" 2>/dev/null | sort -u
+            )
+          else
+            referenced=()
+          fi
+
+          matches=()
+          for candidate in "${candidates[@]}"; do
+            for ref in "${referenced[@]}"; do
+              if [ "$(basename "$candidate")" = "$ref" ]; then
+                matches+=("$candidate")
+              fi
+            done
+          done
+
+          if [ "${#matches[@]}" -eq 1 ]; then
+            printf '%s\n' "${matches[0]}"
+            return 0
+          fi
+
+          echo "::error::Unable to determine the active synced Clang directory"
+          printf '%s\n' "${candidates[@]}"
+          exit 1
+        }
+
+        write_metadata() {
+          local selection="$1"
+          local selected_dir="$2"
+          local target_path="$3"
+          local backup_path="$4"
+          local clang_bin="$5"
+          local lld_bin="$6"
+
+          {
+            echo "clang_selection=$selection"
+            echo "selected_dir=$selected_dir"
+            echo "override_target=$target_path"
+            echo "backup_path=$backup_path"
+            echo
+            echo "[clang --version]"
+            "$clang_bin" --version
+            echo
+            echo "[ld.lld --version]"
+            "$lld_bin" --version
+            echo
+            echo "Compare this file against uname -a or /proc/version after boot."
+          } | tee "$COMPILER_INFO" > "$LOG_FILE"
+        }
+
+        CLANG_ROOT="$(find_clang_root)"
+        TARGET_CLANG_DIR="$(find_clang_dir "$CLANG_ROOT")"
+        TARGET_CLANG_NAME="$(basename "$TARGET_CLANG_DIR")"
+        BACKUP_CLANG_DIR="${TARGET_CLANG_DIR}.original"
+        ACTIVE_CLANG_DIR="$TARGET_CLANG_DIR"
+
+        if [ "$CHOICE" = "default" ]; then
+          CLANG_BIN="$TARGET_CLANG_DIR/bin/clang"
+          LLD_BIN="$TARGET_CLANG_DIR/bin/ld.lld"
+
+          if [ ! -x "$CLANG_BIN" ] || [ ! -x "$LLD_BIN" ]; then
+            echo "::error::Default synced Clang is missing expected binaries under $TARGET_CLANG_DIR"
+            exit 1
+          fi
+
+          echo "== default synced Clang =="
+          "$CLANG_BIN" --version
+
+          {
+            echo "CLANG_SELECTION=default"
+            echo "CLANG_OVERRIDE_ROOT=$CLANG_ROOT"
+            echo "CLANG_OVERRIDE_TARGET=$TARGET_CLANG_DIR"
+            echo "CLANG_OVERRIDE_TARGET_NAME=$TARGET_CLANG_NAME"
+            echo "CLANG_ACTIVE_DIR=$ACTIVE_CLANG_DIR"
+            echo "CLANG_BACKUP_DIR="
+          } >> "$GITHUB_ENV"
+
+          write_metadata "default" "$ACTIVE_CLANG_DIR" "$TARGET_CLANG_DIR" "" "$CLANG_BIN" "$LLD_BIN"
+          exit 0
+        fi
+
+        rm -rf "$AOSP_CLANG_DIR"
+        git clone --depth=1 --filter=blob:none --sparse "$AOSP_CLANG_URL" "$AOSP_CLANG_DIR"
+        git -C "$AOSP_CLANG_DIR" sparse-checkout set --cone "$CHOICE"
+
+        SELECTED_CLANG_DIR="$AOSP_CLANG_DIR/$CHOICE"
+        CLANG_BIN="$SELECTED_CLANG_DIR/bin/clang"
+        LLD_BIN="$SELECTED_CLANG_DIR/bin/ld.lld"
+
+        if [ ! -x "$CLANG_BIN" ] || [ ! -x "$LLD_BIN" ]; then
+          echo "::error::Selected curated Clang is missing expected binaries under $SELECTED_CLANG_DIR"
+          exit 1
+        fi
+
+        if [ -e "$BACKUP_CLANG_DIR" ]; then
+          echo "::error::Backup target already exists: $BACKUP_CLANG_DIR"
+          exit 1
+        fi
+
+        echo "== curated Clang override =="
+        echo "selection=$CHOICE"
+        echo "selected_dir=$SELECTED_CLANG_DIR"
+        echo "override_target=$TARGET_CLANG_DIR"
+
+        mv "$TARGET_CLANG_DIR" "$BACKUP_CLANG_DIR"
+        ln -s "$SELECTED_CLANG_DIR" "$TARGET_CLANG_DIR"
+
+        if [ ! -L "$TARGET_CLANG_DIR" ]; then
+          echo "::error::Expected symlink override was not created at $TARGET_CLANG_DIR"
+          exit 1
+        fi
+
+        ACTIVE_CLANG_DIR="$SELECTED_CLANG_DIR"
+
+        {
+          echo "CLANG_SELECTION=$CHOICE"
+          echo "CLANG_OVERRIDE_ROOT=$CLANG_ROOT"
+          echo "CLANG_OVERRIDE_TARGET=$TARGET_CLANG_DIR"
+          echo "CLANG_OVERRIDE_TARGET_NAME=$TARGET_CLANG_NAME"
+          echo "CLANG_ACTIVE_DIR=$ACTIVE_CLANG_DIR"
+          echo "CLANG_BACKUP_DIR=$BACKUP_CLANG_DIR"
+        } >> "$GITHUB_ENV"
+
+        write_metadata "$CHOICE" "$ACTIVE_CLANG_DIR" "$TARGET_CLANG_DIR" "$BACKUP_CLANG_DIR" "$CLANG_BIN" "$LLD_BIN"
