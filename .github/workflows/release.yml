@@ -191,13 +191,13 @@ jobs:
         if: matrix.lto == 'full'
         uses: ./.github/actions/add-swap
         with:
-          size_gb: "12"
+          size_gb: "16"
 
       - name: Add swap for thin LTO
         if: matrix.lto == 'thin'
         uses: ./.github/actions/add-swap
         with:
-          size_gb: "6"
+          size_gb: "8"
 
       - name: Commit kernel changes
         uses: ./.github/actions/commit-kernel-changes
