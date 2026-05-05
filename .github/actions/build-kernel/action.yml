@@ -14,23 +14,10 @@ runs:
       run: |
         set -euo pipefail
 
-        print_disk_usage() {
-          local label="$1"
-
-          echo "== disk usage: $label =="
-          df -h
-          (
-            cd "$GITHUB_WORKSPACE"
-            du -sh kernel .toolchains out 2>/dev/null || true
-          )
-        }
-
-        print_disk_usage "before build"
-
         cd kernel
 
-        if [ -n "${CLANG_OVERRIDE_TARGET:-}" ] && [ -x "${CLANG_OVERRIDE_TARGET}/bin/clang" ]; then
-          export PATH="${CLANG_OVERRIDE_TARGET}/bin:$PATH"
+        if [ -n "${CLANG_PATH:-}" ] && [ -x "${CLANG_PATH}/clang" ]; then
+          export PATH="${CLANG_PATH}:$PATH"
         elif [ -n "${CLANG_ACTIVE_DIR:-}" ] && [ -x "${CLANG_ACTIVE_DIR}/bin/clang" ]; then
           export PATH="${CLANG_ACTIVE_DIR}/bin:$PATH"
         else
@@ -46,17 +33,38 @@ runs:
           fi
         fi
 
-        echo "PATH=$PATH"
-        echo "CLANG_SELECTION=${CLANG_SELECTION:-}"
-        echo "CLANG_OVERRIDE_TARGET=${CLANG_OVERRIDE_TARGET:-}"
-        echo "CLANG_ACTIVE_DIR=${CLANG_ACTIVE_DIR:-}"
-        command -v clang || true
-        clang --version || true
+        CLANG_CMD="$(command -v clang || true)"
+        echo "command -v clang: ${CLANG_CMD:-not found}"
+        if [ -n "$CLANG_CMD" ]; then
+          CLANG_VERSION_LINE="$(clang --version | head -n 1 || true)"
+          echo "clang version: ${CLANG_VERSION_LINE:-unknown}"
+        fi
 
-        if ! command -v clang >/dev/null 2>&1; then
+        if [ -z "$CLANG_CMD" ]; then
           echo "::error::clang is not available in PATH before kernel build"
           exit 1
         fi
+
+        {
+          echo
+          echo "== build-step compiler environment =="
+          echo "PATH=$PATH"
+          echo "clang_selection=${CLANG_SELECTION:-}"
+          echo "clang_override_target=${CLANG_OVERRIDE_TARGET:-}"
+          echo "clang_active_dir=${CLANG_ACTIVE_DIR:-}"
+          echo "clang_path=${CLANG_PATH:-}"
+          echo "[command -v clang]"
+          echo "$CLANG_CMD"
+          echo
+          echo "[clang --version]"
+          clang --version || true
+          echo
+          echo "[command -v ld.lld]"
+          command -v ld.lld || echo "ld.lld: not found"
+          echo
+          echo "[ld.lld --version]"
+          ld.lld --version || echo "ld.lld: not found"
+        } >> "${GITHUB_WORKSPACE}/compiler-version.txt"
 
         JOBS="4"
         if [ "${{ inputs.lto }}" = "full" ]; then
@@ -128,5 +136,3 @@ runs:
             ! -path "./common/private.required" \
             2>/dev/null | sort || true
         fi
-
-        print_disk_usage "after build"
