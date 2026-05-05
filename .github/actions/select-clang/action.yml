@@ -20,85 +20,67 @@ runs:
         COMPILER_INFO="${GITHUB_WORKSPACE}/compiler-version.txt"
         LOG_FILE="${TOOLCHAIN_BASE}/clang-override.log"
         AOSP_CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86"
+        SEARCHED_ROOTS="
+        ${GITHUB_WORKSPACE}/kernel/prebuilts/clang/host/linux-x86
+        ${GITHUB_WORKSPACE}/kernel/prebuilts-master/clang/host/linux-x86
+        ${GITHUB_WORKSPACE}/prebuilts/clang/host/linux-x86
+        ${GITHUB_WORKSPACE}/prebuilts-master/clang/host/linux-x86
+        "
 
         mkdir -p "$TOOLCHAIN_BASE"
 
-        find_clang_root() {
-          local root
-          local -a roots
+        print_debug() {
+          local selected_root="${1:-}"
+          local selected_target="${2:-}"
+          local candidates_text="${3:-}"
 
-          if [ -d "$KERNEL_DIR/prebuilts/clang/host/linux-x86" ]; then
-            printf '%s\n' "$KERNEL_DIR/prebuilts/clang/host/linux-x86"
-            return 0
+          echo "== clang discovery debug ==" >&2
+          echo "workspace=$GITHUB_WORKSPACE" >&2
+          echo "searched_roots:" >&2
+          printf '%s\n' $SEARCHED_ROOTS >&2
+          echo "found_clang_candidates:" >&2
+          if [ -n "$candidates_text" ]; then
+            printf '%s\n' "$candidates_text" >&2
+          else
+            echo "(none)" >&2
           fi
-
-          mapfile -t roots < <(
-            find "$KERNEL_DIR" -type d -path '*/prebuilts/clang/host/linux-x86' | sort
-          )
-
-          if [ "${#roots[@]}" -eq 1 ]; then
-            printf '%s\n' "${roots[0]}"
-            return 0
-          fi
-
-          echo "::error::Unable to determine the synced Clang prebuilts root"
-          if [ "${#roots[@]}" -gt 1 ]; then
-            printf '%s\n' "${roots[@]}"
-          fi
-          exit 1
+          echo "selected_clang_root=${selected_root:-<none>}" >&2
+          echo "selected_target_dir=${selected_target:-<none>}" >&2
         }
 
-        find_clang_dir() {
-          local root="$1"
-          local -a candidates
-          local -a search_paths
-          local -a referenced
-          local -a matches
+        find_clang_root_and_target() {
+          local root
           local candidate
-          local ref
+          local candidate_dir
+          local candidates_text=""
 
-          mapfile -t candidates < <(
-            find "$root" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) \
-              -name 'clang-r*' ! -name '*.original' | sort
-          )
+          for root in $SEARCHED_ROOTS; do
+            if [ ! -d "$root" ]; then
+              continue
+            fi
 
-          if [ "${#candidates[@]}" -eq 1 ]; then
-            printf '%s\n' "${candidates[0]}"
-            return 0
-          fi
-
-          search_paths=()
-          if [ -d "$KERNEL_DIR/build" ]; then
-            search_paths+=("$KERNEL_DIR/build")
-          fi
-          if [ -d "$KERNEL_DIR/common" ]; then
-            search_paths+=("$KERNEL_DIR/common")
-          fi
-
-          if [ "${#search_paths[@]}" -gt 0 ]; then
-            mapfile -t referenced < <(
-              grep -RhoE 'clang-r[0-9]+' "${search_paths[@]}" 2>/dev/null | sort -u
+            while IFS= read -r candidate; do
+              [ -n "$candidate" ] || continue
+              candidates_text="${candidates_text}${candidate}"$'\n'
+            done < <(
+              find "$root" -maxdepth 2 -path "$root/clang-r*/bin/clang" -type f -perm -111 2>/dev/null || true
             )
-          else
-            referenced=()
-          fi
 
-          matches=()
-          for candidate in "${candidates[@]}"; do
-            for ref in "${referenced[@]}"; do
-              if [ "$(basename "$candidate")" = "$ref" ]; then
-                matches+=("$candidate")
-              fi
-            done
+            candidate="$(
+              find "$root" -maxdepth 2 -path "$root/clang-r*/bin/clang" -type f -perm -111 2>/dev/null | sort | head -n 1 || true
+            )"
+            if [ -z "$candidate" ]; then
+              continue
+            fi
+
+            candidate_dir="$(dirname "$(dirname "$candidate")")"
+            print_debug "$root" "$candidate_dir" "$candidates_text"
+            printf '%s\n%s\n' "$root" "$candidate_dir"
+            return 0
           done
 
-          if [ "${#matches[@]}" -eq 1 ]; then
-            printf '%s\n' "${matches[0]}"
-            return 0
-          fi
-
-          echo "::error::Unable to determine the active synced Clang directory"
-          printf '%s\n' "${candidates[@]}"
+          print_debug "" "" "$candidates_text"
+          echo "::error::Unable to detect a synced Clang toolchain directory"
           exit 1
         }
 
@@ -126,8 +108,13 @@ runs:
           } | tee "$COMPILER_INFO" > "$LOG_FILE"
         }
 
-        CLANG_ROOT="$(find_clang_root)"
-        TARGET_CLANG_DIR="$(find_clang_dir "$CLANG_ROOT")"
+        mapfile -t DETECTED_PATHS < <(find_clang_root_and_target)
+        if [ "${#DETECTED_PATHS[@]}" -lt 2 ]; then
+          echo "::error::Clang discovery did not return the expected root and target"
+          exit 1
+        fi
+        CLANG_ROOT="${DETECTED_PATHS[-2]}"
+        TARGET_CLANG_DIR="${DETECTED_PATHS[-1]}"
         TARGET_CLANG_NAME="$(basename "$TARGET_CLANG_DIR")"
         BACKUP_CLANG_DIR="${TARGET_CLANG_DIR}.original"
         ACTIVE_CLANG_DIR="$TARGET_CLANG_DIR"
@@ -137,11 +124,13 @@ runs:
           LLD_BIN="$TARGET_CLANG_DIR/bin/ld.lld"
 
           if [ ! -x "$CLANG_BIN" ] || [ ! -x "$LLD_BIN" ]; then
+            print_debug "$CLANG_ROOT" "$TARGET_CLANG_DIR" "$CLANG_BIN"$'\n'"$LLD_BIN"
             echo "::error::Default synced Clang is missing expected binaries under $TARGET_CLANG_DIR"
             exit 1
           fi
 
           echo "== default synced Clang =="
+          echo "target_dir=$TARGET_CLANG_DIR"
           "$CLANG_BIN" --version
 
           {
@@ -166,11 +155,13 @@ runs:
         LLD_BIN="$SELECTED_CLANG_DIR/bin/ld.lld"
 
         if [ ! -x "$CLANG_BIN" ] || [ ! -x "$LLD_BIN" ]; then
+          print_debug "$CLANG_ROOT" "$TARGET_CLANG_DIR" "$SELECTED_CLANG_DIR/bin/clang"$'\n'"$SELECTED_CLANG_DIR/bin/ld.lld"
           echo "::error::Selected curated Clang is missing expected binaries under $SELECTED_CLANG_DIR"
           exit 1
         fi
 
         if [ -e "$BACKUP_CLANG_DIR" ]; then
+          print_debug "$CLANG_ROOT" "$TARGET_CLANG_DIR" "$BACKUP_CLANG_DIR"
           echo "::error::Backup target already exists: $BACKUP_CLANG_DIR"
           exit 1
         fi
@@ -184,6 +175,7 @@ runs:
         ln -s "$SELECTED_CLANG_DIR" "$TARGET_CLANG_DIR"
 
         if [ ! -L "$TARGET_CLANG_DIR" ]; then
+          print_debug "$CLANG_ROOT" "$TARGET_CLANG_DIR" "$TARGET_CLANG_DIR"
           echo "::error::Expected symlink override was not created at $TARGET_CLANG_DIR"
           exit 1
         fi
