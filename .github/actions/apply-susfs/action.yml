@@ -80,26 +80,6 @@ runs:
         cp "$SUSFS_INCLUDE_DIR"/* include/linux/
         ls -l fs/susfs.c include/linux/susfs*.h
 
-        show_context() {
-          pattern="$1"
-          file="$2"
-
-          if ! grep -n -C2 -E "$pattern" "$file"; then
-            echo "not present: $pattern"
-          fi
-        }
-
-        if [ "${{ inputs.kernel_version }}" = "6.1" ]; then
-          echo
-          echo "== 6.1 namespace blk hook include before workaround =="
-          show_context '^#include <trace/hooks/blk\.h>$' fs/namespace.c
-
-          sed -i '/^#include <trace\/hooks\/blk\.h>$/d' fs/namespace.c
-
-          echo "== 6.1 namespace blk hook include after removal =="
-          show_context '^#include <trace/hooks/blk\.h>$' fs/namespace.c
-        fi
-
         echo
         echo "== check/apply core SUSFS patch =="
         if ! git apply --check "$SUSFS_PATCH"; then
@@ -112,19 +92,6 @@ runs:
         fi
 
         git apply "$SUSFS_PATCH"
-
-        if [ "${{ inputs.kernel_version }}" = "6.1" ]; then
-          echo
-          echo "== 6.1 namespace blk hook include before restore =="
-          show_context '^#include <trace/hooks/blk\.h>$' fs/namespace.c
-
-          if ! grep -qF '#include <trace/hooks/blk.h>' fs/namespace.c; then
-            sed -i '/^#include "internal.h"$/a #include <trace/hooks/blk.h>' fs/namespace.c
-          fi
-
-          echo "== 6.1 namespace blk hook include after restore =="
-          grep -nF '#include <trace/hooks/blk.h>' fs/namespace.c
-        fi
 
         if find . -name '*.rej' -print -quit | grep -q .; then
           echo "::error::reject files found after SUSFS patch"
