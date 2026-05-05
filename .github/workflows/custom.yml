@@ -16,6 +16,14 @@ on:
         description: "Optional manager git ref/commit/tag"
         required: false
         default: ""
+      source_repo:
+        description: "Optional git repo URL to replace kernel/common"
+        required: false
+        default: ""
+      source_ref:
+        description: "Optional source git ref/branch/tag/commit"
+        required: false
+        default: ""
       lto:
         type: choice
         required: true
@@ -159,6 +167,9 @@ jobs:
 
       - name: Sync source
         uses: ./.github/actions/sync-kernel
+        with:
+          source_repo: ${{ inputs.source_repo }}
+          source_ref: ${{ inputs.source_ref }}
 
       - name: Init manager
         if: inputs.manager != 'Vanilla'
