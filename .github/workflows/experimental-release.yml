@@ -150,6 +150,8 @@ jobs:
 
       - name: Sync source
         uses: ./.github/actions/sync-kernel
+        with:
+          source_mode: maintained
 
       - name: Resolve experimental source repo
         id: source-repo

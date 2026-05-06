@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <!-- Maintained/custom builds replace kernel/common after sync. -->
+  <remove-project name="kernel/common" path="common" />
+
+  <!-- Not required for the Kleaf common:kernel_aarch64_dist target. -->
+  <remove-project name="kernel/configs" path="kernel/configs" />
+  <remove-project
+    name="kernel/common-modules/virtual-device"
+    path="common-modules/virtual-device"
+  />
+</manifest>

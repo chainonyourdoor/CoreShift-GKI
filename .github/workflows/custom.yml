@@ -173,6 +173,8 @@ jobs:
 
       - name: Sync source
         uses: ./.github/actions/sync-kernel
+        with:
+          source_mode: ${{ inputs.source_mode }}
 
       - name: Resolve source repo
         id: source-repo

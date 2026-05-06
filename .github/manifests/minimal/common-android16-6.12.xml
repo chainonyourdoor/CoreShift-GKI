@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <!-- Maintained/custom builds replace kernel/common after sync. -->
+  <remove-project name="kernel/common" path="common" />
+
+  <!-- Not required for the Kleaf common:kernel_aarch64_dist target. -->
+  <remove-project
+    name="kernel/common-modules/wonder"
+    path="common-modules/wonder"
+  />
+  <remove-project
+    name="kernel/common-modules/trusty"
+    path="common-modules/trusty"
+  />
+  <remove-project
+    name="platform/external/virtio-media"
+    path="common-modules/virtio-media"
+  />
+  <remove-project
+    name="kernel/common-modules/virtual-device"
+    path="common-modules/virtual-device"
+  />
+  <remove-project name="platform/external/ltp" path="test/ltp" />
+
+  <!-- GBL-specific dependencies are not used by this CI build path. -->
+  <remove-project
+    name="platform/bootable/libbootloader"
+    path="bootable/libbootloader"
+  />
+  <remove-project name="platform/bootable/recovery" path="bootable/recovery" />
+  <remove-project
+    name="platform/external/arm-trusted-firmware"
+    path="external/arm-trusted-firmware"
+  />
+  <remove-project name="platform/external/avb" path="external/avb" />
+  <remove-project name="platform/external/boringssl" path="external/boringssl" />
+  <remove-project
+    name="platform/external/compiler-rt"
+    path="external/compiler-rt"
+  />
+  <remove-project name="platform/external/dtc" path="external/dtc" />
+  <remove-project name="platform/system/libufdt" path="external/libufdt" />
+  <remove-project name="platform/external/open-dice" path="external/open-dice" />
+  <remove-project name="platform/external/elfutils" path="external/elfutils" />
+  <remove-project
+    name="platform/external/googletest"
+    path="external/googletest"
+  />
+  <remove-project
+    name="platform/external/rust/android-crates-io"
+    path="external/rust/android-crates-io"
+  />
+  <remove-project
+    name="platform/external/rust/crates/smoltcp"
+    path="external/rust/crates/smoltcp"
+  />
+  <remove-project
+    name="platform/external/rust/crates/zune-inflate"
+    path="external/rust/crates/zune-inflate"
+  />
+  <remove-project
+    name="platform/prebuilts/fuchsia_sdk"
+    path="prebuilts/fuchsia_sdk"
+  />
+  <remove-project name="platform/system/core" path="system/core" />
+</manifest>

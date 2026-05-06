@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <!-- Maintained/custom builds replace kernel/common after sync. -->
+  <remove-project name="kernel/common" path="common" />
+
+  <!-- Not required for the legacy GKI Image build path used in CI. -->
+  <remove-project name="kernel/hikey-modules" path="hikey-modules" />
+  <remove-project name="kernel/configs" path="kernel/configs" />
+  <remove-project
+    name="kernel/common-modules/virtual-device"
+    path="common-modules/virtual-device"
+  />
+</manifest>
