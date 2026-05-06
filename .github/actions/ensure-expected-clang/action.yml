@@ -13,7 +13,7 @@ runs:
   steps:
     - shell: bash
       run: |
-        set -euo pipefail
+        set -eo pipefail
 
         if [ "${{ inputs.enabled }}" != "true" ]; then
           echo "ensure-expected-clang: disabled"
