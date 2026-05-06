@@ -31,79 +31,36 @@ runs:
         mkdir -p "$TEMP_ROOT"
         touch "$METADATA_FILE"
 
-        declare -A seen_bins=()
-        declare -A seen_existing_dirs=()
-        declare -A seen_populated_dirs=()
-        declare -A seen_path_exports=()
         declare -a expected_bins=()
         declare -a existing_dirs=()
-        declare -a populated_dirs=()
+        declare -a symlinked_dirs=()
+        declare -a overlaid_dirs=()
         declare -a path_exports=()
 
-        normalize_rel_path() {
+        add_unique() {
           local value="$1"
+          shift
+          local -n target_ref="$1"
+          local current
 
-          value="${value%\"}"
-          value="${value#\"}"
-          value="${value%\'}"
-          value="${value#\'}"
-          value="${value%%[[:space:]]*}"
-          value="${value#./}"
-          printf '%s\n' "$value"
+          [ -n "$value" ] || return
+
+          for current in "${target_ref[@]:-}"; do
+            [ "$current" != "$value" ] || return
+          done
+
+          target_ref+=("$value")
         }
 
         add_expected_bin() {
           local bin_path="$1"
 
-          if [ -z "$bin_path" ]; then
-            return
-          fi
-
+          [ -n "$bin_path" ] || return
           if [[ "$bin_path" != "$KERNEL_ROOT/"* ]]; then
             bin_path="$KERNEL_ROOT/$bin_path"
           fi
 
-          bin_path="$(readlink -m "$bin_path")"
-
-          if [ -n "${seen_bins[$bin_path]:-}" ]; then
-            return
-          fi
-
-          seen_bins["$bin_path"]=1
-          expected_bins+=("$bin_path")
-        }
-
-        add_path_export() {
-          local bin_dir="$1"
-
-          if [ -z "$bin_dir" ] || [ -n "${seen_path_exports[$bin_dir]:-}" ]; then
-            return
-          fi
-
-          seen_path_exports["$bin_dir"]=1
-          path_exports+=("$bin_dir")
-        }
-
-        record_existing_dir() {
-          local dir_path="$1"
-
-          if [ -n "${seen_existing_dirs[$dir_path]:-}" ]; then
-            return
-          fi
-
-          seen_existing_dirs["$dir_path"]=1
-          existing_dirs+=("$dir_path")
-        }
-
-        record_populated_dir() {
-          local dir_path="$1"
-
-          if [ -n "${seen_populated_dirs[$dir_path]:-}" ]; then
-            return
-          fi
-
-          seen_populated_dirs["$dir_path"]=1
-          populated_dirs+=("$dir_path")
+          add_unique "$(readlink -m "$bin_path")" expected_bins
         }
 
         materialize_fallback_checkout() {
@@ -128,7 +85,64 @@ runs:
           fi
         }
 
-        print_version_for_bin() {
+        detect_legacy_expected_bin() {
+          local build_config="common/build.config.gki.aarch64"
+          local clang_prebuilt_bin=""
+
+          if [ ! -f "$KERNEL_ROOT/$build_config" ]; then
+            echo "::error::missing legacy build config: $KERNEL_ROOT/$build_config"
+            exit 1
+          fi
+
+          clang_prebuilt_bin="$(
+            ROOT_DIR="$KERNEL_ROOT" \
+            BUILD_CONFIG="$build_config" \
+            KERNEL_DIR="common" \
+            bash -c '
+              set -euo pipefail
+              set -a
+              . "${ROOT_DIR}/${BUILD_CONFIG}"
+              set +a
+              printf "%s\n" "${CLANG_PREBUILT_BIN:-}"
+            '
+          )"
+
+          if [ -z "$clang_prebuilt_bin" ]; then
+            echo "::error::CLANG_PREBUILT_BIN not resolved from active legacy build config"
+            exit 1
+          fi
+
+          add_expected_bin "$clang_prebuilt_bin/clang"
+        }
+
+        detect_kleaf_expected_bin() {
+          local constants_file="$KERNEL_ROOT/common/build.config.constants"
+          local clang_version=""
+
+          if [ ! -f "$constants_file" ]; then
+            echo "::error::missing Kleaf build config constants: $constants_file"
+            exit 1
+          fi
+
+          clang_version="$(
+            sed -n 's/^[[:space:]]*CLANG_VERSION=//p' "$constants_file" | tail -n 1
+          )"
+
+          clang_version="${clang_version%\"}"
+          clang_version="${clang_version#\"}"
+          clang_version="${clang_version%\'}"
+          clang_version="${clang_version#\'}"
+          clang_version="${clang_version%%[[:space:]]*}"
+
+          if [[ ! "$clang_version" =~ ^r[0-9a-z]+$ ]]; then
+            echo "::error::invalid or missing CLANG_VERSION in $constants_file: ${clang_version:-unset}"
+            exit 1
+          fi
+
+          add_expected_bin "prebuilts/clang/host/linux-x86/clang-${clang_version}/bin/clang"
+        }
+
+        print_tool_versions() {
           local clang_bin="$1"
           local lld_bin
 
@@ -141,79 +155,10 @@ runs:
           fi
         }
 
-        declare -a search_roots=()
-        for candidate in \
-          "$KERNEL_ROOT/common" \
-          "$KERNEL_ROOT/build" \
-          "$KERNEL_ROOT/prebuilts" \
-          "$KERNEL_ROOT/prebuilts-master"
-        do
-          if [ -e "$candidate" ]; then
-            search_roots+=("$candidate")
-          fi
-        done
-
-        if [ "${#search_roots[@]}" -eq 0 ]; then
-          echo "::error::no kernel source roots available for Clang detection"
-          exit 1
-        fi
-
-        while IFS= read -r ref; do
-          ref="$(normalize_rel_path "$ref")"
-          [ -n "$ref" ] || continue
-
-          case "$ref" in
-            */bin/clang)
-              add_expected_bin "$ref"
-              ;;
-            */bin)
-              add_expected_bin "$ref/clang"
-              ;;
-            *)
-              add_expected_bin "$ref/bin/clang"
-              ;;
-          esac
-        done < <(
-          grep -R -h -o -E 'prebuilts(-master)?/clang/host/linux-x86/clang-r[0-9a-z]+(/bin(/clang)?)?' "${search_roots[@]}" 2>/dev/null | sort -u || true
-        )
-
-        while IFS= read -r ref; do
-          ref="$(normalize_rel_path "$ref")"
-          [ -n "$ref" ] || continue
-          add_expected_bin "$ref/clang"
-        done < <(
-          grep -R -h -E '^[[:space:]]*CLANG_PREBUILT_BIN[[:space:]]*=' "$KERNEL_ROOT/common"/build.config* 2>/dev/null |
-            sed -E 's/^[^=]+=//; s/[[:space:]]+$//' |
-            sort -u || true
-        )
-
-        if [ -d "$KERNEL_ROOT/prebuilts/clang/host/linux-x86" ]; then
-          while IFS= read -r token; do
-            [ -n "$token" ] || continue
-            add_expected_bin "prebuilts/clang/host/linux-x86/$token/bin/clang"
-          done < <(
-            grep -R -h -o -E 'clang-r[0-9a-z]+' "$KERNEL_ROOT/common" "$KERNEL_ROOT/build" "$KERNEL_ROOT/prebuilts/clang/host/linux-x86" 2>/dev/null | sort -u || true
-          )
-        fi
-
-        if [ "$BUILD_ENGINE" = "legacy" ] && [ -d "$KERNEL_ROOT/prebuilts-master/clang/host/linux-x86" ]; then
-          while IFS= read -r token; do
-            [ -n "$token" ] || continue
-            add_expected_bin "prebuilts-master/clang/host/linux-x86/$token/bin/clang"
-          done < <(
-            grep -R -h -o -E 'clang-r[0-9a-z]+' "$KERNEL_ROOT/common" "$KERNEL_ROOT/build" "$KERNEL_ROOT/prebuilts-master/clang/host/linux-x86" 2>/dev/null | sort -u || true
-          )
-        fi
-
-        if [ "${#expected_bins[@]}" -eq 0 ]; then
-          while IFS= read -r existing_bin; do
-            [ -n "$existing_bin" ] || continue
-            add_expected_bin "$existing_bin"
-          done < <(
-            find "$KERNEL_ROOT" -maxdepth 8 -type f \
-              \( -path '*/prebuilts/clang/host/linux-x86/clang-r*/bin/clang' -o -path '*/prebuilts-master/clang/host/linux-x86/clang-r*/bin/clang' \) \
-              -print 2>/dev/null | sort -u || true
-          )
+        if [ "$BUILD_ENGINE" = "legacy" ]; then
+          detect_legacy_expected_bin
+        else
+          detect_kleaf_expected_bin
         fi
 
         if [ "${#expected_bins[@]}" -eq 0 ]; then
@@ -226,19 +171,28 @@ runs:
 
         for clang_bin in "${expected_bins[@]}"; do
           clang_dir="$(dirname "$(dirname "$clang_bin")")"
+          bin_dir="$(dirname "$clang_bin")"
 
           if [ -x "$clang_bin" ]; then
-            record_existing_dir "$clang_dir"
-            add_path_export "$(dirname "$clang_bin")"
-            print_version_for_bin "$clang_bin"
+            add_unique "$clang_dir" existing_dirs
+            add_unique "$bin_dir" path_exports
+            echo "clang state: existing -> $clang_dir"
+            print_tool_versions "$clang_bin"
             continue
           fi
 
           materialize_fallback_checkout
 
-          mkdir -p "$(dirname "$clang_dir")"
-
-          if [ -d "$clang_dir" ]; then
+          if [ -L "$clang_dir" ]; then
+            rm -f "$clang_dir"
+            ln -s "$FALLBACK_DIR" "$clang_dir"
+            add_unique "$clang_dir" symlinked_dirs
+            echo "clang state: symlinked existing symlink -> $clang_dir -> $FALLBACK_DIR"
+          elif [ -d "$clang_dir" ]; then
+            if ! command -v rsync >/dev/null 2>&1; then
+              echo "::error::rsync is required to overlay an existing Clang dir: $clang_dir"
+              exit 1
+            fi
             rsync -a \
               --exclude='BUILD' \
               --exclude='BUILD.bazel' \
@@ -248,19 +202,22 @@ runs:
               --exclude='WORKSPACE.bazel' \
               "$FALLBACK_DIR/" \
               "$clang_dir/"
+            add_unique "$clang_dir" overlaid_dirs
+            echo "clang state: overlaid -> $clang_dir"
           else
-            mkdir -p "$clang_dir"
-            rsync -a "$FALLBACK_DIR/" "$clang_dir/"
+            mkdir -p "$(dirname "$clang_dir")"
+            ln -s "$FALLBACK_DIR" "$clang_dir"
+            add_unique "$clang_dir" symlinked_dirs
+            echo "clang state: symlinked missing dir -> $clang_dir -> $FALLBACK_DIR"
           fi
 
-          if [ ! -x "$clang_bin" ]; then
-            echo "::error::expected clang still missing after fallback copy: $clang_bin"
+          if [ ! -x "$clang_dir/bin/clang" ]; then
+            echo "::error::expected clang still missing after fallback materialization: $clang_dir/bin/clang"
             exit 1
           fi
 
-          record_populated_dir "$clang_dir"
-          add_path_export "$(dirname "$clang_bin")"
-          print_version_for_bin "$clang_bin"
+          "$clang_dir/bin/clang" --version | head -n 1 || true
+          add_unique "$bin_dir" path_exports
         done
 
         if [ "${#path_exports[@]}" -eq 0 ]; then
@@ -272,15 +229,10 @@ runs:
           echo "$bin_dir" >> "$GITHUB_PATH"
         done
 
-        SELECTED_CLANG_BIN=""
-        SELECTED_LLD_BIN=""
-        for clang_bin in "${expected_bins[@]}"; do
-          if [ -x "$clang_bin" ]; then
-            SELECTED_CLANG_BIN="$clang_bin"
-            SELECTED_LLD_BIN="$(dirname "$clang_bin")/ld.lld"
-            break
-          fi
-        done
+        FALLBACK_CLANG_BIN="$FALLBACK_DIR/bin/clang"
+        FALLBACK_LLD_BIN="$FALLBACK_DIR/bin/ld.lld"
+        SELECTED_CLANG_BIN="${expected_bins[0]}"
+        SELECTED_LLD_BIN="$(dirname "${expected_bins[0]}")/ld.lld"
 
         {
           echo
@@ -295,14 +247,33 @@ runs:
           for dir_path in "${existing_dirs[@]}"; do
             echo "existing_dir=$dir_path"
           done
-          for dir_path in "${populated_dirs[@]}"; do
-            echo "populated_dir=$dir_path"
+          for dir_path in "${symlinked_dirs[@]}"; do
+            echo "symlinked_dir=$dir_path"
+          done
+          for dir_path in "${overlaid_dirs[@]}"; do
+            echo "overlaid_dir=$dir_path"
           done
           echo "exported_bin_dir=${path_exports[0]}"
 
           echo
+          echo "== fallback clang --version =="
+          if [ -x "$FALLBACK_CLANG_BIN" ]; then
+            "$FALLBACK_CLANG_BIN" --version || true
+          else
+            echo "fallback clang: not materialized"
+          fi
+
+          echo
+          echo "== fallback ld.lld --version =="
+          if [ -x "$FALLBACK_LLD_BIN" ]; then
+            "$FALLBACK_LLD_BIN" --version || true
+          else
+            echo "fallback ld.lld: not materialized"
+          fi
+
+          echo
           echo "== ensure-expected-clang clang --version =="
-          if [ -n "$SELECTED_CLANG_BIN" ]; then
+          if [ -x "$SELECTED_CLANG_BIN" ]; then
             "$SELECTED_CLANG_BIN" --version || true
           else
             echo "clang: not found"
@@ -310,7 +281,7 @@ runs:
 
           echo
           echo "== ensure-expected-clang ld.lld --version =="
-          if [ -n "$SELECTED_LLD_BIN" ] && [ -x "$SELECTED_LLD_BIN" ]; then
+          if [ -x "$SELECTED_LLD_BIN" ]; then
             "$SELECTED_LLD_BIN" --version || true
           else
             echo "ld.lld: not found"
