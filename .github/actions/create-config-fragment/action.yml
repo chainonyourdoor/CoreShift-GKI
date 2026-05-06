@@ -73,6 +73,14 @@ runs:
           printf 'CONFIG_%s="%s"\n' "$key" "$val" >> private.required
         }
 
+        has_kconfig_symbol() {
+          local kconfig_file="$1"
+          local symbol="$2"
+
+          [ -f "$kconfig_file" ] || return 1
+          grep -qE "^[[:space:]]*config[[:space:]]+${symbol}\$" "$kconfig_file"
+        }
+
         if [ "${{ inputs.ikconfig }}" = "on" ]; then
           add_config IKCONFIG y
           add_config IKCONFIG_PROC y
@@ -219,8 +227,14 @@ runs:
         fi
 
         if [ "${{ inputs.kernel_version }}" = "6.12" ]; then
+          android_kconfig="drivers/android/Kconfig"
+
           add_config ANDROID_BINDER_IPC y
           add_config ANDROID_BINDERFS y
+
+          if has_kconfig_symbol "$android_kconfig" ANDROID_BINDER_IPC_RUST_DUMMY; then
+            add_config ANDROID_BINDER_IPC_RUST_DUMMY m
+          fi
         fi
 
         echo "== private.fragment =="
