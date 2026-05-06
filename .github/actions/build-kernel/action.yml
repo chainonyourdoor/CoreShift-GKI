@@ -39,9 +39,27 @@ runs:
           local label="$1"
 
           echo
-          echo "== rust_binder module outputs: $label =="
-          echo "rust_binder outputs:"
+          echo "== rust_binder diagnostics: $label =="
+
+          echo "== rust_binder locations =="
           find out bazel-out -name 'rust_binder.ko' -print 2>/dev/null || true
+
+          echo "== modules.order refs =="
+          find out bazel-out -name 'modules.order' -print 2>/dev/null |
+          while read -r f; do
+            echo "--- $f"
+            grep -n 'rust_binder' "$f" || true
+          done
+
+          echo "== modules.builtin refs =="
+          find out bazel-out -name 'modules.builtin' -print 2>/dev/null |
+          while read -r f; do
+            echo "--- $f"
+            grep -n 'rust_binder' "$f" || true
+          done
+
+          echo "== expected rust_binder refs =="
+          grep -R -n 'rust_binder.ko' common build 2>/dev/null || true
         }
 
         if [ "$BUILD_ENGINE" = "kleaf" ]; then
