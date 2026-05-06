@@ -35,6 +35,10 @@ runs:
           echo "LLD_PARALLEL_LINK_JOBS=$LLD_PARALLEL_LINK_JOBS"
         fi
 
+        run_optional() {
+          "$@" || true
+        }
+
         print_rust_binder_diagnostics() {
           local label="$1"
 
@@ -42,21 +46,19 @@ runs:
           echo "== rust_binder diagnostics: $label =="
 
           echo "== rust_binder locations =="
-          find out bazel-out -name 'rust_binder.ko' -print 2>/dev/null || true
+          run_optional find out bazel-out -name 'rust_binder.ko' -print
 
           echo "== modules.order refs =="
-          find out bazel-out -name 'modules.order' -print 2>/dev/null |
-          while read -r f; do
+          while IFS= read -r f; do
             echo "--- $f"
             grep -n 'rust_binder' "$f" || true
-          done
+          done < <(find out bazel-out -name 'modules.order' -print 2>/dev/null || true)
 
           echo "== modules.builtin refs =="
-          find out bazel-out -name 'modules.builtin' -print 2>/dev/null |
-          while read -r f; do
+          while IFS= read -r f; do
             echo "--- $f"
             grep -n 'rust_binder' "$f" || true
-          done
+          done < <(find out bazel-out -name 'modules.builtin' -print 2>/dev/null || true)
 
           echo "== expected rust_binder refs =="
           grep -R -n 'rust_binder.ko' common build 2>/dev/null || true
@@ -65,10 +67,6 @@ runs:
         if [ "$BUILD_ENGINE" = "kleaf" ]; then
           unset SKIP_EXT_MODULES SKIP_UNSTRIPPED_MODULES SKIP_MODULES
           echo "Kleaf build: required GKI modules are not skipped"
-
-          if [ "${{ inputs.kernel_version }}" = "6.12" ]; then
-            print_rust_binder_diagnostics "before build"
-          fi
 
           build_status=0
           tools/bazel run \
