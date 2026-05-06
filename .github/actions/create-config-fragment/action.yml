@@ -244,15 +244,21 @@ runs:
         echo "== private.required =="
         cat private.required
 
-        touch BUILD.bazel
+        if [ "${BUILD_ENGINE:-}" = "kleaf" ]; then
+          touch BUILD.bazel
 
-        if ! grep -q 'private.fragment' BUILD.bazel; then
-          {
-            printf '\n'
-            printf 'exports_files(["private.fragment"])\n'
-          } >> BUILD.bazel
+          if ! grep -q 'private.fragment' BUILD.bazel; then
+            {
+              printf '\n'
+              printf 'exports_files(["private.fragment"])\n'
+            } >> BUILD.bazel
+          fi
+
+          echo
+          echo "== BUILD.bazel private fragment export =="
+          grep -n 'private.fragment' BUILD.bazel || true
+        else
+          echo
+          echo "== legacy private fragment =="
+          echo "Skipping Bazel BUILD.bazel export for BUILD_ENGINE=${BUILD_ENGINE:-unknown}"
         fi
-
-        echo
-        echo "== BUILD.bazel private fragment export =="
-        grep -n 'private.fragment' BUILD.bazel || true

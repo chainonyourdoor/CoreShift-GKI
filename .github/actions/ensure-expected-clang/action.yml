@@ -123,17 +123,21 @@ runs:
           fi
 
           sparse_args=(
-            "/BUILD"
-            "/BUILD.bazel"
-            "/kleaf"
-            "/MODULE.bazel"
-            "/WORKSPACE"
-            "/WORKSPACE.bazel"
-            "/*.bzl"
             "/$PREFERRED_FALLBACK_CLANG"
             "/$PREFERRED_FALLBACK_CLANG/**"
-            "/kleaf/**"
           )
+          if [ "${BUILD_ENGINE:-}" = "kleaf" ]; then
+            sparse_args+=(
+              "/BUILD"
+              "/BUILD.bazel"
+              "/kleaf"
+              "/kleaf/**"
+              "/MODULE.bazel"
+              "/WORKSPACE"
+              "/WORKSPACE.bazel"
+              "/*.bzl"
+            )
+          fi
 
           rm -rf "$FALLBACK_CHECKOUT"
           git clone \
@@ -207,20 +211,28 @@ runs:
           rm -rf "$dst_root"
           mkdir -p "$dst_root"
 
-          for root_entry in BUILD BUILD.bazel MODULE.bazel WORKSPACE WORKSPACE.bazel; do
-            if [ -e "$src_root/$root_entry" ]; then
-              cp -a "$src_root/$root_entry" "$dst_root/$root_entry"
-            fi
-          done
+          if [ "${BUILD_ENGINE:-}" = "kleaf" ]; then
+            for root_entry in BUILD BUILD.bazel MODULE.bazel WORKSPACE WORKSPACE.bazel; do
+              if [ -e "$src_root/$root_entry" ]; then
+                cp -a "$src_root/$root_entry" "$dst_root/$root_entry"
+              fi
+            done
 
-          for root_file in "$src_root"/*.bzl; do
-            if [ -e "$root_file" ]; then
-              cp -a "$root_file" "$dst_root/"
-            fi
-          done
+            for root_file in "$src_root"/*.bzl; do
+              if [ -e "$root_file" ]; then
+                cp -a "$root_file" "$dst_root/"
+              fi
+            done
 
-          if [ -d "$src_root/kleaf" ]; then
-            cp -a "$src_root/kleaf" "$dst_root/kleaf"
+            if [ -d "$src_root/kleaf" ]; then
+              cp -a "$src_root/kleaf" "$dst_root/kleaf"
+            fi
+            mkdir -p "$dst_root/kleaf"
+            if [ ! -f "$dst_root/kleaf/BUILD" ] && [ ! -f "$dst_root/kleaf/BUILD.bazel" ]; then
+              {
+                echo "# Package marker for fallback Kleaf Clang toolchain metadata."
+              } > "$dst_root/kleaf/BUILD.bazel"
+            fi
           fi
 
           cp -a "$fallback_dir" "$dst_root/$PREFERRED_FALLBACK_CLANG"
@@ -244,18 +256,29 @@ runs:
           local project_root="$1"
           local clang_bin="$2"
 
-          if [ ! -f "$project_root/BUILD" ] && [ ! -f "$project_root/BUILD.bazel" ]; then
-            echo "::error::missing Bazel package metadata: $project_root/BUILD or BUILD.bazel"
+          if [ ! -x "$clang_bin" ]; then
+            echo "::error::expected clang missing or not executable: $clang_bin"
+            exit 1
+          fi
+
+          if [ "${BUILD_ENGINE:-}" != "kleaf" ]; then
+            return
+          fi
+
+          mkdir -p "$project_root/kleaf"
+          if [ ! -f "$project_root/kleaf/BUILD" ] && [ ! -f "$project_root/kleaf/BUILD.bazel" ]; then
+            {
+              echo "# Package marker for fallback Kleaf Clang toolchain metadata."
+            } > "$project_root/kleaf/BUILD.bazel"
+          fi
+
+          if [ ! -f "$project_root/kleaf/BUILD" ] && [ ! -f "$project_root/kleaf/BUILD.bazel" ]; then
+            echo "::error::missing Kleaf package marker: $project_root/kleaf/BUILD or BUILD.bazel"
             exit 1
           fi
 
           if [ ! -f "$project_root/kleaf/clang_toolchain_repository.bzl" ]; then
             echo "::error::missing Kleaf toolchain metadata: $project_root/kleaf/clang_toolchain_repository.bzl"
-            exit 1
-          fi
-
-          if [ ! -x "$clang_bin" ]; then
-            echo "::error::expected clang missing or not executable: $clang_bin"
             exit 1
           fi
         }
@@ -375,12 +398,16 @@ runs:
           validate_toolchain_package "$clang_project_root" "$clang_bin"
           add_unique "$clang_dir" materialized_dirs
           add_unique "$clang_dir" fallback_used_dirs
-          add_unique "yes" recreated_kleaf_metadata_states
+          if [ "${BUILD_ENGINE:-}" = "kleaf" ]; then
+            add_unique "yes" recreated_kleaf_metadata_states
+          fi
           echo "clang state: materialized -> $clang_dir"
           echo "clang project root: $clang_project_root"
           echo "original clang project excluded: $original_project_excluded"
           echo "fallback source clang dir: $fallback_dir"
-          echo "materialized Kleaf metadata from fallback checkout"
+          if [ "${BUILD_ENGINE:-}" = "kleaf" ]; then
+            echo "materialized Kleaf metadata from fallback checkout"
+          fi
 
           "$clang_dir/bin/clang" --version | head -n 1 || true
           add_unique "$bin_dir" path_exports
