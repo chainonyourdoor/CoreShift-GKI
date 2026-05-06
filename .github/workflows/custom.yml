@@ -326,6 +326,8 @@ jobs:
         with:
           lto: ${{ inputs.lto }}
           kernel_version: ${{ inputs.kernel_version }}
+          source_mode: ${{ inputs.source_mode }}
+          kmi_strict: ${{ inputs.source_mode == 'google-lts' && 'on' || 'off' }}
 
       - name: Write compiler metadata
         uses: ./.github/actions/write-compiler-metadata

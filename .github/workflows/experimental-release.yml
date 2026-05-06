@@ -284,6 +284,8 @@ jobs:
         with:
           lto: ${{ matrix.lto }}
           kernel_version: ${{ matrix.kernel_version }}
+          source_mode: maintained
+          kmi_strict: "off"
 
       - name: Write compiler metadata
         uses: ./.github/actions/write-compiler-metadata

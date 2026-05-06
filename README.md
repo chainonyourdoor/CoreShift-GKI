@@ -119,6 +119,8 @@ Manual **Build Kernel** and **Custom Kernel Build** are single-build flows, not 
 
 Maintained and custom source modes are experimental. They can fail build, KMI, KCFI, module loading, Wi-Fi, root manager integration, or boot even when the Google LTS source path works.
 
+Google LTS builds keep strict KMI symbol-list checking enabled. Maintained and custom experimental builds may relax Kleaf KMI strict mode because those replacement source trees can differ from Google's published GKI symbol list, for example when a source tree no longer exports symbols that Google's list still requires. This avoids failing solely on source/list mismatches, but it can reduce vendor module compatibility: experimental builds may still break Wi-Fi, vendor modules, root integration, or boot.
+
 ### Maintained Source Defaults
 
 The manual `source_mode=maintained` flow and the experimental release workflow use these maintained `kernel/common` repos by default:

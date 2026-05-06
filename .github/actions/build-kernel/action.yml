@@ -7,6 +7,14 @@ inputs:
   kernel_version:
     required: true
     description: Kernel version.
+  source_mode:
+    required: false
+    default: "google-lts"
+    description: Source mode used by the workflow.
+  kmi_strict:
+    required: false
+    default: "on"
+    description: Keep Kleaf KMI symbol-list strict mode enabled.
 runs:
   using: composite
   steps:
@@ -27,6 +35,8 @@ runs:
 
         echo "BUILD_ENGINE=$BUILD_ENGINE"
         echo "KERNEL_VERSION=${{ inputs.kernel_version }}"
+        echo "SOURCE_MODE=${{ inputs.source_mode }}"
+        echo "KMI_STRICT=${{ inputs.kmi_strict }}"
         echo "LTO=${{ inputs.lto }}"
         echo "JOBS=$JOBS"
         echo "MAKEFLAGS=$MAKEFLAGS"
@@ -35,16 +45,50 @@ runs:
           echo "LLD_PARALLEL_LINK_JOBS=$LLD_PARALLEL_LINK_JOBS"
         fi
 
+        print_ashmem_kmi_diagnostics() {
+          echo
+          echo "== ashmem KMI diagnostics =="
+
+          echo "== ashmem config refs =="
+          find out common/out -type f -name ".config" -print 2>/dev/null |
+            while IFS= read -r config_file; do
+              echo "--- $config_file"
+              grep -nE 'CONFIG_(ANDROID_)?ASHMEM' "$config_file" || true
+            done || true
+
+          echo "== ashmem source files =="
+          find drivers/staging/android mm -maxdepth 2 \
+            \( -name 'ashmem*' -o -name '*ashmem*' \) -print 2>/dev/null || true
+
+          echo "== ashmem export refs =="
+          grep -R -nE 'EXPORT_SYMBOL.*(ashmem_area_name|ashmem_area_size|ashmem_area_vmfile|is_ashmem_file)|ashmem_area_name|ashmem_area_size|ashmem_area_vmfile|is_ashmem_file' \
+            drivers/staging/android mm common build 2>/dev/null || true
+
+          echo "== active KMI ashmem symbol-list refs =="
+          grep -R -nE 'ashmem_area_name|ashmem_area_size|ashmem_area_vmfile|is_ashmem_file' \
+            common/android common build 2>/dev/null || true
+        }
+
         if [ "$BUILD_ENGINE" = "kleaf" ]; then
           unset SKIP_EXT_MODULES SKIP_UNSTRIPPED_MODULES SKIP_MODULES
           echo "Kleaf build: required GKI modules are not skipped"
+          bazel_args=(
+            "--lto=${{ inputs.lto }}"
+            "--defconfig_fragment=//common:private.fragment"
+          )
+
+          if [ "${{ inputs.kmi_strict }}" != "on" ]; then
+            echo "Kleaf KMI symbol-list strict mode disabled for source_mode=${{ inputs.source_mode }}"
+            bazel_args+=("--nokmi_symbol_list_strict_mode")
+          fi
 
           build_status=0
-          tools/bazel run \
-            --lto=${{ inputs.lto }} \
-            --defconfig_fragment=//common:private.fragment \
-            //common:kernel_aarch64_dist -- \
+          tools/bazel run "${bazel_args[@]}" //common:kernel_aarch64_dist -- \
             --dist_dir=out/dist || build_status=$?
+
+          if [ "$build_status" -ne 0 ] && [ "${{ inputs.kernel_version }}" = "6.12" ]; then
+            print_ashmem_kmi_diagnostics
+          fi
 
           if [ "$build_status" -ne 0 ] && [ "${{ inputs.kernel_version }}" = "6.12" ]; then
             echo "== rust_binder debug after failed build =="
