@@ -121,6 +121,27 @@ runs:
           bash "$SETUP_SCRIPT"
         fi
 
+        if { [ "$MANAGER" = "KernelSU" ] || [ "$MANAGER" = "KowSU" ]; } &&
+          [ -f drivers/staging/Kconfig ] &&
+          grep -q 'source "drivers/staging/kernelsu/kernel/Kconfig"' drivers/staging/Kconfig; then
+          if [ -f drivers/kernelsu/Kconfig ]; then
+            echo "== normalize KernelSU Kconfig layout =="
+            echo "removing stale staging KernelSU include; manager setup installed drivers/kernelsu/Kconfig"
+            sed -i '\|source "drivers/staging/kernelsu/kernel/Kconfig"|d' drivers/staging/Kconfig
+          fi
+        fi
+
+        echo "== KernelSU Kconfig validation =="
+        grep -R -n 'kernelsu.*/kernel/Kconfig\|KernelSU.*/kernel/Kconfig' drivers Kconfig 2>/dev/null || true
+        find . -path '*/kernel/Kconfig' | grep -i 'kernelsu\|ksu' || true
+
+        if grep -R -q 'drivers/staging/kernelsu/kernel/Kconfig' drivers/staging/Kconfig 2>/dev/null; then
+          test -f drivers/staging/kernelsu/kernel/Kconfig || {
+            echo "::error::drivers/staging/Kconfig references missing drivers/staging/kernelsu/kernel/Kconfig"
+            exit 1
+          }
+        fi
+
         echo "== verify integrated KernelSU =="
         KSU_MARKERS="$(
           find "$COMMON_DIR" \
