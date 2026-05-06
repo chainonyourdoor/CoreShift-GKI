@@ -86,29 +86,26 @@ runs:
         }
 
         detect_legacy_expected_bin() {
-          local build_config="common/build.config.gki.aarch64"
           local clang_prebuilt_bin=""
 
-          if [ ! -f "$KERNEL_ROOT/$build_config" ]; then
-            echo "::error::missing legacy build config: $KERNEL_ROOT/$build_config"
+          if ! compgen -G "$GITHUB_WORKSPACE/kernel/common/build.config*" >/dev/null; then
+            echo "::error::missing legacy build configs: $GITHUB_WORKSPACE/kernel/common/build.config*"
             exit 1
           fi
 
           clang_prebuilt_bin="$(
-            ROOT_DIR="$KERNEL_ROOT" \
-            BUILD_CONFIG="$build_config" \
-            KERNEL_DIR="common" \
-            bash -c '
-              set -euo pipefail
-              set -a
-              . "${ROOT_DIR}/${BUILD_CONFIG}"
-              set +a
-              printf "%s\n" "${CLANG_PREBUILT_BIN:-}"
-            '
+            grep -R -h -E '^[[:space:]]*(export[[:space:]]+)?CLANG_PREBUILT_BIN=' \
+              "$GITHUB_WORKSPACE/kernel/common"/build.config* 2>/dev/null |
+            sed -E \
+              -e 's/^[[:space:]]*(export[[:space:]]+)?CLANG_PREBUILT_BIN=//' \
+              -e 's/[[:space:]]+#.*$//' \
+              -e 's/^["'\''"]//' \
+              -e 's/["'\''"]$//' |
+            tail -n 1 || true
           )"
 
           if [ -z "$clang_prebuilt_bin" ]; then
-            echo "::error::CLANG_PREBUILT_BIN not resolved from active legacy build config"
+            echo "::error::CLANG_PREBUILT_BIN not found in legacy build configs"
             exit 1
           fi
 
