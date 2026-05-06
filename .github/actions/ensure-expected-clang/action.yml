@@ -22,11 +22,13 @@ runs:
 
         KERNEL_ROOT="$GITHUB_WORKSPACE/kernel"
         METADATA_FILE="$GITHUB_WORKSPACE/compiler-version.txt"
-        FALLBACK_REPO="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86"
+        CLANG_PREBUILT_REPO="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86"
         FALLBACK_CACHE_ROOT="$KERNEL_ROOT/.coreshift-toolchains"
-        FALLBACK_CHECKOUT="$FALLBACK_CACHE_ROOT/linux-x86"
+        METADATA_CHECKOUT="$FALLBACK_CACHE_ROOT/linux-x86-metadata"
+        FALLBACK_CHECKOUT="$FALLBACK_CACHE_ROOT/linux-x86-fallback"
         PREFERRED_FALLBACK_CLANG="clang-r584948"
-        FALLBACK_REPO_REVISION=""
+        METADATA_REPO_REVISION=""
+        METADATA_REPO_SOURCE="unset"
         FALLBACK_REPO_SOURCE="unset"
         FALLBACK_SOURCE_CLANG_NAME=""
 
@@ -70,29 +72,56 @@ runs:
           add_unique "$(readlink -m "$bin_path")" expected_bins
         }
 
-        detect_fallback_repo_revision() {
+        detect_metadata_repo_revision() {
           local manifest_file="$KERNEL_ROOT/.repo/manifests/default.xml"
+          local project_line=""
 
           if [ ! -f "$manifest_file" ]; then
-            echo "::error::missing repo manifest: $manifest_file"
-            exit 1
-          fi
-
-          FALLBACK_REPO_REVISION="$(
-            sed -n \
-              's#.*<project[^>]*name="platform/prebuilts/clang/host/linux-x86"[^>]*revision="\([^"]*\)".*#\1#p' \
-              "$manifest_file" |
-            head -n 1
-          )"
-
-          if [ -z "$FALLBACK_REPO_REVISION" ]; then
-            FALLBACK_REPO_REVISION="$(
-              sed -n 's#.*<default[^>]*revision="\([^"]*\)".*#\1#p' "$manifest_file" | head -n 1
+            echo "::warning::missing repo manifest: $manifest_file"
+          else
+            project_line="$(
+              grep -E '<project[^>]*(name="platform/prebuilts/clang/host/linux-x86"|path="prebuilts/clang/host/linux-x86"|path="prebuilts-master/clang/host/linux-x86")' \
+                "$manifest_file" |
+              head -n 1 || true
             )"
+
+            METADATA_REPO_REVISION="$(
+              sed -n 's#.*revision="\([^"]*\)".*#\1#p' <<< "$project_line" | head -n 1
+            )"
+
+            if [ -z "$METADATA_REPO_REVISION" ]; then
+              METADATA_REPO_REVISION="$(
+                sed -n 's#.*<default[^>]*revision="\([^"]*\)".*#\1#p' "$manifest_file" | head -n 1
+              )"
+            fi
+
+            if [ -n "$METADATA_REPO_REVISION" ]; then
+              METADATA_REPO_SOURCE="manifest"
+            fi
           fi
 
-          if [ -z "$FALLBACK_REPO_REVISION" ]; then
-            echo "::error::could not determine Clang prebuilt revision from $manifest_file"
+          if [ -z "$METADATA_REPO_REVISION" ] && command -v repo >/dev/null 2>&1; then
+            METADATA_REPO_REVISION="$(
+              (
+                cd "$KERNEL_ROOT"
+                repo manifest -r 2>/dev/null || true
+              ) |
+                grep -E '<project[^>]*(name="platform/prebuilts/clang/host/linux-x86"|path="prebuilts/clang/host/linux-x86"|path="prebuilts-master/clang/host/linux-x86")' |
+                sed -n 's#.*revision="\([^"]*\)".*#\1#p' |
+                head -n 1
+            )"
+            if [ -n "$METADATA_REPO_REVISION" ]; then
+              METADATA_REPO_SOURCE="repo-manifest"
+            fi
+          fi
+
+          if [ -z "$METADATA_REPO_REVISION" ]; then
+            METADATA_REPO_REVISION="${BRANCH:-}"
+            METADATA_REPO_SOURCE="branch-fallback"
+          fi
+
+          if [ -z "$METADATA_REPO_REVISION" ]; then
+            echo "::error::could not determine Clang prebuilt metadata revision from $manifest_file or BRANCH"
             exit 1
           fi
         }
@@ -114,83 +143,84 @@ runs:
           done
         }
 
-        materialize_fallback_checkout() {
+        materialize_metadata_checkout() {
+          local expected_dirname="$1"
           local sparse_args=()
           local root_entry
 
-          if [ -z "$FALLBACK_REPO_REVISION" ]; then
-            detect_fallback_repo_revision
+          if [ -z "$METADATA_REPO_REVISION" ]; then
+            detect_metadata_repo_revision
           fi
 
           sparse_args=(
-            "/$PREFERRED_FALLBACK_CLANG"
-            "/$PREFERRED_FALLBACK_CLANG/**"
+            "/BUILD"
+            "/BUILD.bazel"
+            "/kleaf"
+            "/kleaf/**"
+            "/MODULE.bazel"
+            "/WORKSPACE"
+            "/WORKSPACE.bazel"
+            "/*.bzl"
+            "/$expected_dirname"
+            "/$expected_dirname/**"
           )
-          if [ "${BUILD_ENGINE:-}" = "kleaf" ]; then
-            sparse_args+=(
-              "/BUILD"
-              "/BUILD.bazel"
-              "/kleaf"
-              "/kleaf/**"
-              "/MODULE.bazel"
-              "/WORKSPACE"
-              "/WORKSPACE.bazel"
-              "/*.bzl"
-            )
-          fi
 
-          rm -rf "$FALLBACK_CHECKOUT"
+          rm -rf "$METADATA_CHECKOUT"
           git clone \
             --depth=1 \
-            --branch "$FALLBACK_REPO_REVISION" \
+            --branch "$METADATA_REPO_REVISION" \
             --filter=blob:none \
             --sparse \
-            "$FALLBACK_REPO" \
-            "$FALLBACK_CHECKOUT"
-          git -C "$FALLBACK_CHECKOUT" sparse-checkout set --no-cone "${sparse_args[@]}"
+            "$CLANG_PREBUILT_REPO" \
+            "$METADATA_CHECKOUT"
+          git -C "$METADATA_CHECKOUT" sparse-checkout set --no-cone "${sparse_args[@]}"
 
-          if [ -x "$FALLBACK_CHECKOUT/$PREFERRED_FALLBACK_CLANG/bin/clang" ]; then
-            FALLBACK_REPO_SOURCE="manifest-revision"
-            FALLBACK_SOURCE_CLANG_NAME="$PREFERRED_FALLBACK_CLANG"
-          else
-            rm -rf "$FALLBACK_CHECKOUT"
-            git clone \
-              --depth=1 \
-              --filter=blob:none \
-              --sparse \
-              "$FALLBACK_REPO" \
-              "$FALLBACK_CHECKOUT"
-            git -C "$FALLBACK_CHECKOUT" sparse-checkout set --no-cone "${sparse_args[@]}"
-
-            if [ -x "$FALLBACK_CHECKOUT/$PREFERRED_FALLBACK_CLANG/bin/clang" ]; then
-              FALLBACK_REPO_SOURCE="repo-default-head"
-              FALLBACK_SOURCE_CLANG_NAME="$PREFERRED_FALLBACK_CLANG"
-            else
-              echo "::error::no suitable fallback Clang found: $PREFERRED_FALLBACK_CLANG"
-              echo "::error::searched manifest revision $FALLBACK_REPO_REVISION and repo default HEAD"
-              echo "::error::available fallback dirs:"
-              git -C "$FALLBACK_CHECKOUT" ls-tree --name-only -d HEAD | grep '^clang-' | head -40 || true
-              exit 1
-            fi
-          fi
-
-          echo "fallback checkout root: $FALLBACK_CHECKOUT"
-          echo "fallback checkout revision: $FALLBACK_REPO_REVISION"
-          echo "fallback checkout source: $FALLBACK_REPO_SOURCE"
-          echo "fallback source clang: $FALLBACK_SOURCE_CLANG_NAME"
-          echo "fallback checkout files:"
+          echo "metadata checkout root: $METADATA_CHECKOUT"
+          echo "metadata checkout revision: $METADATA_REPO_REVISION"
+          echo "metadata checkout source: $METADATA_REPO_SOURCE"
+          echo "metadata checkout files:"
           for root_entry in BUILD BUILD.bazel MODULE.bazel WORKSPACE WORKSPACE.bazel; do
-            if [ -e "$FALLBACK_CHECKOUT/$root_entry" ]; then
+            if [ -e "$METADATA_CHECKOUT/$root_entry" ]; then
               echo "  $root_entry"
             fi
           done
-          if [ -d "$FALLBACK_CHECKOUT/kleaf" ]; then
+          if [ -d "$METADATA_CHECKOUT/kleaf" ]; then
             echo "  kleaf/"
           fi
         }
 
-        install_fallback_toolchain_package() {
-          local src_root="$1"
+        materialize_fallback_checkout() {
+          local sparse_args=(
+            "/$PREFERRED_FALLBACK_CLANG"
+            "/$PREFERRED_FALLBACK_CLANG/**"
+          )
+
+          rm -rf "$FALLBACK_CHECKOUT"
+          git clone \
+            --depth=1 \
+            --filter=blob:none \
+            --sparse \
+            "$CLANG_PREBUILT_REPO" \
+            "$FALLBACK_CHECKOUT"
+          git -C "$FALLBACK_CHECKOUT" sparse-checkout set --no-cone "${sparse_args[@]}"
+
+          if [ ! -x "$FALLBACK_CHECKOUT/$PREFERRED_FALLBACK_CLANG/bin/clang" ]; then
+            echo "::error::no suitable fallback Clang found: $PREFERRED_FALLBACK_CLANG"
+            echo "::error::available fallback dirs:"
+            git -C "$FALLBACK_CHECKOUT" ls-tree --name-only -d HEAD | grep '^clang-' | head -40 || true
+            exit 1
+          fi
+
+          FALLBACK_REPO_SOURCE="repo-default-head"
+          FALLBACK_SOURCE_CLANG_NAME="$PREFERRED_FALLBACK_CLANG"
+
+          echo "fallback compiler checkout root: $FALLBACK_CHECKOUT"
+          echo "fallback compiler checkout source: $FALLBACK_REPO_SOURCE"
+          echo "fallback source clang: $FALLBACK_SOURCE_CLANG_NAME"
+        }
+
+        install_toolchain_package() {
+          local metadata_root="$1"
           local dst_root="$2"
           local expected_dir="$3"
           local root_entry
@@ -200,32 +230,27 @@ runs:
           local expected_clang_bin
 
           expected_dirname="$(basename "$expected_dir")"
-          fallback_dir="$src_root/$PREFERRED_FALLBACK_CLANG"
+          fallback_dir="$FALLBACK_CHECKOUT/$PREFERRED_FALLBACK_CLANG"
           expected_clang_bin="$expected_dir/bin/clang"
-
-          if [ ! -d "$fallback_dir" ]; then
-            echo "::error::fallback Clang directory missing: $fallback_dir"
-            exit 1
-          fi
 
           rm -rf "$dst_root"
           mkdir -p "$dst_root"
 
           if [ "${BUILD_ENGINE:-}" = "kleaf" ]; then
             for root_entry in BUILD BUILD.bazel MODULE.bazel WORKSPACE WORKSPACE.bazel; do
-              if [ -e "$src_root/$root_entry" ]; then
-                cp -a "$src_root/$root_entry" "$dst_root/$root_entry"
+              if [ -e "$metadata_root/$root_entry" ]; then
+                cp -a "$metadata_root/$root_entry" "$dst_root/$root_entry"
               fi
             done
 
-            for root_file in "$src_root"/*.bzl; do
+            for root_file in "$metadata_root"/*.bzl; do
               if [ -e "$root_file" ]; then
                 cp -a "$root_file" "$dst_root/"
               fi
             done
 
-            if [ -d "$src_root/kleaf" ]; then
-              cp -a "$src_root/kleaf" "$dst_root/kleaf"
+            if [ -d "$metadata_root/kleaf" ]; then
+              cp -a "$metadata_root/kleaf" "$dst_root/kleaf"
             fi
             mkdir -p "$dst_root/kleaf"
             if [ ! -f "$dst_root/kleaf/BUILD" ] && [ ! -f "$dst_root/kleaf/BUILD.bazel" ]; then
@@ -235,21 +260,57 @@ runs:
             fi
           fi
 
-          cp -a "$fallback_dir" "$dst_root/$PREFERRED_FALLBACK_CLANG"
-
-          if [ "$expected_dirname" != "$PREFERRED_FALLBACK_CLANG" ]; then
-            if ln -s "$PREFERRED_FALLBACK_CLANG" "$expected_dir" 2>/dev/null; then
-              :
-            else
-              rm -rf "$expected_dir"
-              cp -a "$dst_root/$PREFERRED_FALLBACK_CLANG" "$expected_dir"
+          if [ -x "$metadata_root/$expected_dirname/bin/clang" ]; then
+            cp -a "$metadata_root/$expected_dirname" "$expected_dir"
+            FALLBACK_REPO_SOURCE="metadata-checkout"
+            FALLBACK_SOURCE_CLANG_NAME="$expected_dirname"
+          else
+            materialize_fallback_checkout
+            if [ ! -d "$fallback_dir" ]; then
+              echo "::error::fallback Clang directory missing: $fallback_dir"
+              exit 1
             fi
-          fi
-
-          if [ ! -x "$expected_clang_bin" ]; then
-            rm -rf "$expected_dir"
             cp -a "$fallback_dir" "$expected_dir"
           fi
+        }
+
+        kleaf_bzl_is_referenced() {
+          local bzl_file="$1"
+
+          grep -R -q -E \
+            "prebuilts/clang/host/linux-x86/kleaf:${bzl_file}|load\(.*kleaf.*${bzl_file}" \
+            "$KERNEL_ROOT/build" "$KERNEL_ROOT/MODULE.bazel" 2>/dev/null
+        }
+
+        kleaf_metadata_complete() {
+          local project_root="$1"
+
+          [ "${BUILD_ENGINE:-}" = "kleaf" ] || return 0
+
+          if kleaf_bzl_is_referenced "register\\.bzl" &&
+            [ ! -f "$project_root/kleaf/register.bzl" ]; then
+            return 1
+          fi
+
+          if kleaf_bzl_is_referenced "clang_toolchain_repository\\.bzl" &&
+            [ ! -f "$project_root/kleaf/clang_toolchain_repository.bzl" ]; then
+            return 1
+          fi
+
+          return 0
+        }
+
+        print_kleaf_metadata_diagnostics() {
+          local project_root="$1"
+
+          [ "${BUILD_ENGINE:-}" = "kleaf" ] || return 0
+
+          echo "== Kleaf Clang metadata refs expected by build =="
+          grep -R -nE 'prebuilts/clang/host/linux-x86/kleaf:.*\.bzl|load\(.*kleaf' \
+            "$KERNEL_ROOT/build" "$KERNEL_ROOT/MODULE.bazel" 2>/dev/null || true
+
+          echo "== recreated kleaf metadata files =="
+          find "$project_root/kleaf" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | sort || true
         }
 
         validate_toolchain_package() {
@@ -277,10 +338,19 @@ runs:
             exit 1
           fi
 
-          if [ ! -f "$project_root/kleaf/clang_toolchain_repository.bzl" ]; then
+          if kleaf_bzl_is_referenced "register\\.bzl" &&
+            [ ! -f "$project_root/kleaf/register.bzl" ]; then
+            echo "::error::missing branch-required Kleaf metadata: $project_root/kleaf/register.bzl"
+            exit 1
+          fi
+
+          if kleaf_bzl_is_referenced "clang_toolchain_repository\\.bzl" &&
+            [ ! -f "$project_root/kleaf/clang_toolchain_repository.bzl" ]; then
             echo "::error::missing Kleaf toolchain metadata: $project_root/kleaf/clang_toolchain_repository.bzl"
             exit 1
           fi
+
+          print_kleaf_metadata_diagnostics "$project_root"
         }
 
         detect_legacy_expected_bin() {
@@ -384,29 +454,37 @@ runs:
           add_unique "$original_project_excluded" clang_project_excluded_states
 
           if [ -x "$clang_bin" ]; then
-            add_unique "$clang_dir" existing_dirs
-            add_unique "$bin_dir" path_exports
-            echo "clang state: existing -> $clang_dir"
-            print_tool_versions "$clang_bin"
-            continue
+            if kleaf_metadata_complete "$clang_project_root"; then
+              validate_toolchain_package "$clang_project_root" "$clang_bin"
+              add_unique "$clang_dir" existing_dirs
+              add_unique "$bin_dir" path_exports
+              echo "clang state: existing -> $clang_dir"
+              print_tool_versions "$clang_bin"
+              continue
+            fi
+
+            echo "clang state: existing compiler with incomplete Kleaf metadata -> $clang_dir"
           fi
 
-          materialize_fallback_checkout
-          fallback_dir="$FALLBACK_CHECKOUT/$FALLBACK_SOURCE_CLANG_NAME"
+          fallback_dir=""
+          materialize_metadata_checkout "$clang_dirname"
 
-          install_fallback_toolchain_package "$FALLBACK_CHECKOUT" "$clang_project_root" "$clang_dir"
+          install_toolchain_package "$METADATA_CHECKOUT" "$clang_project_root" "$clang_dir"
+          fallback_dir="$FALLBACK_CHECKOUT/$FALLBACK_SOURCE_CLANG_NAME"
           validate_toolchain_package "$clang_project_root" "$clang_bin"
           add_unique "$clang_dir" materialized_dirs
-          add_unique "$clang_dir" fallback_used_dirs
+          if [ "$FALLBACK_REPO_SOURCE" != "metadata-checkout" ]; then
+            add_unique "$clang_dir" fallback_used_dirs
+          fi
           if [ "${BUILD_ENGINE:-}" = "kleaf" ]; then
             add_unique "yes" recreated_kleaf_metadata_states
           fi
           echo "clang state: materialized -> $clang_dir"
           echo "clang project root: $clang_project_root"
           echo "original clang project excluded: $original_project_excluded"
-          echo "fallback source clang dir: $fallback_dir"
+          echo "compiler source clang dir: ${fallback_dir:-$METADATA_CHECKOUT/$clang_dirname}"
           if [ "${BUILD_ENGINE:-}" = "kleaf" ]; then
-            echo "materialized Kleaf metadata from fallback checkout"
+            echo "materialized Kleaf metadata from manifest-matched checkout"
           fi
 
           "$clang_dir/bin/clang" --version | head -n 1 || true
@@ -426,8 +504,13 @@ runs:
         FALLBACK_LLD_BIN=""
         FALLBACK_CLANG_USED="no"
         if [ -n "$FALLBACK_SOURCE_CLANG_NAME" ]; then
-          FALLBACK_CLANG_BIN="$FALLBACK_CHECKOUT/${FALLBACK_SOURCE_CLANG_NAME}/bin/clang"
-          FALLBACK_LLD_BIN="$FALLBACK_CHECKOUT/${FALLBACK_SOURCE_CLANG_NAME}/bin/ld.lld"
+          if [ "$FALLBACK_REPO_SOURCE" = "metadata-checkout" ]; then
+            FALLBACK_CLANG_BIN="$METADATA_CHECKOUT/${FALLBACK_SOURCE_CLANG_NAME}/bin/clang"
+            FALLBACK_LLD_BIN="$METADATA_CHECKOUT/${FALLBACK_SOURCE_CLANG_NAME}/bin/ld.lld"
+          else
+            FALLBACK_CLANG_BIN="$FALLBACK_CHECKOUT/${FALLBACK_SOURCE_CLANG_NAME}/bin/clang"
+            FALLBACK_LLD_BIN="$FALLBACK_CHECKOUT/${FALLBACK_SOURCE_CLANG_NAME}/bin/ld.lld"
+          fi
         fi
         if [ "${#fallback_used_dirs[@]}" -gt 0 ]; then
           FALLBACK_CLANG_USED="yes"
@@ -440,7 +523,8 @@ runs:
           echo "== ensure expected clang =="
           echo "kernel_version=${{ inputs.kernel_version }}"
           echo "build_engine=${BUILD_ENGINE:-unknown}"
-          echo "fallback_repo_revision=${FALLBACK_REPO_REVISION:-unset}"
+          echo "metadata_repo_revision=${METADATA_REPO_REVISION:-unset}"
+          echo "metadata_repo_source=${METADATA_REPO_SOURCE:-unset}"
           echo "fallback_repo_source=${FALLBACK_REPO_SOURCE:-unset}"
           echo "fallback_source_clang=${FALLBACK_SOURCE_CLANG_NAME:-unset}"
           echo "expected_dir_count=${#expected_bins[@]}"
