@@ -21,6 +21,10 @@
     path="common-modules/virtual-device"
   />
   <remove-project name="platform/external/ltp" path="test/ltp" />
+  <remove-project
+    name="platform/prebuilts/clang/host/linux-x86"
+    path="prebuilts/clang/host/linux-x86"
+  />
 
   <!-- GBL-specific dependencies are not used by this CI build path. -->
   <remove-project

@@ -13,4 +13,8 @@
     name="kernel/common-modules/virtual-device"
     path="common-modules/virtual-device"
   />
+  <remove-project
+    name="platform/prebuilts/clang/host/linux-x86"
+    path="prebuilts/clang/host/linux-x86"
+  />
 </manifest>
