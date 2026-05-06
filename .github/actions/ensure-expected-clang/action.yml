@@ -42,6 +42,7 @@ runs:
         declare -a path_exports=()
         declare -a clang_project_excluded_states=()
         declare -a fallback_used_dirs=()
+        declare -a recreated_kleaf_metadata_states=()
 
         add_unique() {
           local value="$1"
@@ -114,7 +115,6 @@ runs:
         }
 
         materialize_fallback_checkout() {
-          local expected_dirname
           local sparse_args=()
           local root_entry
 
@@ -122,17 +122,17 @@ runs:
             detect_fallback_repo_revision
           fi
 
-          expected_dirname="${expected_clang_dirnames[0]}"
-
           sparse_args=(
             "/BUILD"
             "/BUILD.bazel"
+            "/kleaf"
             "/MODULE.bazel"
             "/WORKSPACE"
             "/WORKSPACE.bazel"
             "/*.bzl"
-            "/$expected_dirname"
             "/$PREFERRED_FALLBACK_CLANG"
+            "/$PREFERRED_FALLBACK_CLANG/**"
+            "/kleaf/**"
           )
 
           rm -rf "$FALLBACK_CHECKOUT"
@@ -145,9 +145,9 @@ runs:
             "$FALLBACK_CHECKOUT"
           git -C "$FALLBACK_CHECKOUT" sparse-checkout set --no-cone "${sparse_args[@]}"
 
-          if [ -x "$FALLBACK_CHECKOUT/$expected_dirname/bin/clang" ]; then
+          if [ -x "$FALLBACK_CHECKOUT/$PREFERRED_FALLBACK_CLANG/bin/clang" ]; then
             FALLBACK_REPO_SOURCE="manifest-revision"
-            FALLBACK_SOURCE_CLANG_NAME="$expected_dirname"
+            FALLBACK_SOURCE_CLANG_NAME="$PREFERRED_FALLBACK_CLANG"
           else
             rm -rf "$FALLBACK_CHECKOUT"
             git clone \
@@ -158,14 +158,11 @@ runs:
               "$FALLBACK_CHECKOUT"
             git -C "$FALLBACK_CHECKOUT" sparse-checkout set --no-cone "${sparse_args[@]}"
 
-            if [ -x "$FALLBACK_CHECKOUT/$expected_dirname/bin/clang" ]; then
-              FALLBACK_REPO_SOURCE="repo-default-head"
-              FALLBACK_SOURCE_CLANG_NAME="$expected_dirname"
-            elif [ -x "$FALLBACK_CHECKOUT/$PREFERRED_FALLBACK_CLANG/bin/clang" ]; then
+            if [ -x "$FALLBACK_CHECKOUT/$PREFERRED_FALLBACK_CLANG/bin/clang" ]; then
               FALLBACK_REPO_SOURCE="repo-default-head"
               FALLBACK_SOURCE_CLANG_NAME="$PREFERRED_FALLBACK_CLANG"
             else
-              echo "::error::no suitable fallback Clang found for expected dir $expected_dirname"
+              echo "::error::no suitable fallback Clang found: $PREFERRED_FALLBACK_CLANG"
               echo "::error::searched manifest revision $FALLBACK_REPO_REVISION and repo default HEAD"
               echo "::error::available fallback dirs:"
               git -C "$FALLBACK_CHECKOUT" ls-tree --name-only -d HEAD | grep '^clang-' | head -40 || true
@@ -183,14 +180,31 @@ runs:
               echo "  $root_entry"
             fi
           done
+          if [ -d "$FALLBACK_CHECKOUT/kleaf" ]; then
+            echo "  kleaf/"
+          fi
         }
 
-        copy_fallback_root_metadata() {
+        install_fallback_toolchain_package() {
           local src_root="$1"
           local dst_root="$2"
+          local expected_dir="$3"
           local root_entry
           local root_file
+          local expected_dirname
+          local fallback_dir
+          local expected_clang_bin
 
+          expected_dirname="$(basename "$expected_dir")"
+          fallback_dir="$src_root/$PREFERRED_FALLBACK_CLANG"
+          expected_clang_bin="$expected_dir/bin/clang"
+
+          if [ ! -d "$fallback_dir" ]; then
+            echo "::error::fallback Clang directory missing: $fallback_dir"
+            exit 1
+          fi
+
+          rm -rf "$dst_root"
           mkdir -p "$dst_root"
 
           for root_entry in BUILD BUILD.bazel MODULE.bazel WORKSPACE WORKSPACE.bazel; do
@@ -204,6 +218,46 @@ runs:
               cp -a "$root_file" "$dst_root/"
             fi
           done
+
+          if [ -d "$src_root/kleaf" ]; then
+            cp -a "$src_root/kleaf" "$dst_root/kleaf"
+          fi
+
+          cp -a "$fallback_dir" "$dst_root/$PREFERRED_FALLBACK_CLANG"
+
+          if [ "$expected_dirname" != "$PREFERRED_FALLBACK_CLANG" ]; then
+            if ln -s "$PREFERRED_FALLBACK_CLANG" "$expected_dir" 2>/dev/null; then
+              :
+            else
+              rm -rf "$expected_dir"
+              cp -a "$dst_root/$PREFERRED_FALLBACK_CLANG" "$expected_dir"
+            fi
+          fi
+
+          if [ ! -x "$expected_clang_bin" ]; then
+            rm -rf "$expected_dir"
+            cp -a "$fallback_dir" "$expected_dir"
+          fi
+        }
+
+        validate_toolchain_package() {
+          local project_root="$1"
+          local clang_bin="$2"
+
+          if [ ! -f "$project_root/BUILD" ] && [ ! -f "$project_root/BUILD.bazel" ]; then
+            echo "::error::missing Bazel package metadata: $project_root/BUILD or BUILD.bazel"
+            exit 1
+          fi
+
+          if [ ! -f "$project_root/kleaf/clang_toolchain_repository.bzl" ]; then
+            echo "::error::missing Kleaf toolchain metadata: $project_root/kleaf/clang_toolchain_repository.bzl"
+            exit 1
+          fi
+
+          if [ ! -x "$clang_bin" ]; then
+            echo "::error::expected clang missing or not executable: $clang_bin"
+            exit 1
+          fi
         }
 
         detect_legacy_expected_bin() {
@@ -317,31 +371,16 @@ runs:
           materialize_fallback_checkout
           fallback_dir="$FALLBACK_CHECKOUT/$FALLBACK_SOURCE_CLANG_NAME"
 
-          if [ ! -d "$fallback_dir" ]; then
-            echo "::error::fallback Clang directory missing: $fallback_dir"
-            exit 1
-          fi
-
-          mkdir -p "$clang_project_root"
-          copy_fallback_root_metadata "$FALLBACK_CHECKOUT" "$clang_project_root"
-
-          rm -rf "$clang_dir"
-          mkdir -p "$clang_dir"
-          cp -a "$fallback_dir/." "$clang_dir/"
+          install_fallback_toolchain_package "$FALLBACK_CHECKOUT" "$clang_project_root" "$clang_dir"
+          validate_toolchain_package "$clang_project_root" "$clang_bin"
           add_unique "$clang_dir" materialized_dirs
           add_unique "$clang_dir" fallback_used_dirs
+          add_unique "yes" recreated_kleaf_metadata_states
           echo "clang state: materialized -> $clang_dir"
           echo "clang project root: $clang_project_root"
           echo "original clang project excluded: $original_project_excluded"
           echo "fallback source clang dir: $fallback_dir"
-          if [ "$original_project_excluded" = "yes" ]; then
-            echo "materialized root metadata from fallback checkout"
-          fi
-
-          if [ ! -x "$clang_dir/bin/clang" ]; then
-            echo "::error::expected clang still missing after fallback materialization: $clang_dir/bin/clang"
-            exit 1
-          fi
+          echo "materialized Kleaf metadata from fallback checkout"
 
           "$clang_dir/bin/clang" --version | head -n 1 || true
           add_unique "$bin_dir" path_exports
@@ -387,6 +426,11 @@ runs:
           for state in "${clang_project_excluded_states[@]}"; do
             echo "original_clang_project_excluded=$state"
           done
+          for state in "${recreated_kleaf_metadata_states[@]}"; do
+            echo "recreated_kleaf_metadata=$state"
+          done
+          echo "fallback_clang=$PREFERRED_FALLBACK_CLANG"
+          echo "expected_clang_dir=$(basename "$(dirname "$(dirname "${expected_bins[0]}")")")"
           for dir_path in "${existing_dirs[@]}"; do
             echo "existing_dir=$dir_path"
           done
