@@ -199,6 +199,12 @@ jobs:
         with:
           remove_bundled_staging: "true"
 
+      - name: Apply source fixes
+        uses: ./.github/actions/apply-source-fixes
+        with:
+          kernel_version: ${{ matrix.kernel_version }}
+          source_mode: maintained
+
       - name: Ensure expected Clang
         uses: ./.github/actions/ensure-expected-clang
         with:

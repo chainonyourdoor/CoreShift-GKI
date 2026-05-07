@@ -1,0 +1,25 @@
+diff --git a/drivers/staging/android/Makefile b/drivers/staging/android/Makefile
+index 3c91f9b3a2c4..8c178c8f0a90 100644
+--- a/drivers/staging/android/Makefile
++++ b/drivers/staging/android/Makefile
+@@ -2,5 +2,5 @@
+ ccflags-y += -I$(src)			# needed for trace events
+ 
+ obj-$(CONFIG_ASHMEM_C)			+= ashmem.o
+-obj-$(CONFIG_ASHMEM_RUST)		+= ashmem_rust.o
+-ashmem_rust-objs += ashmem_rust.o ashmem_rust_exports.o
++obj-$(CONFIG_ASHMEM_RUST)		+= ashmem_rust_driver.o
++ashmem_rust_driver-objs += ashmem_rust.o ashmem_rust_exports.o
+diff --git a/drivers/staging/android/ashmem_rust.rs b/drivers/staging/android/ashmem_rust.rs
+index 27004d98eb1d..a7c7a48c2e48 100644
+--- a/drivers/staging/android/ashmem_rust.rs
++++ b/drivers/staging/android/ashmem_rust.rs
+@@ -662,7 +662,7 @@ unsafe extern "C" fn is_ashmem_file(file: *mut bindings::file) -> bool {
+ unsafe fn get_ashmem_area<'a>(file: *mut bindings::file) -> Result<&'a Ashmem, Error> {
+     // SAFETY: Caller ensures that file is valid, so this should be safe.
+-    if unsafe { is_ashmem_file(file) } {
++    if unsafe { !is_ashmem_file(file) } {
+         return Err(EINVAL);
+     }
+ 
+     // SAFETY: Given that this is an ashmem file, it should be safe to access the private_data

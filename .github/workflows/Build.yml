@@ -209,6 +209,13 @@ jobs:
         with:
           remove_bundled_staging: "true"
 
+      - name: Apply source fixes
+        if: inputs.source_mode != 'google-lts'
+        uses: ./.github/actions/apply-source-fixes
+        with:
+          kernel_version: ${{ inputs.kernel_version }}
+          source_mode: ${{ inputs.source_mode }}
+
       - name: Ensure expected Clang
         if: inputs.source_mode != 'google-lts'
         uses: ./.github/actions/ensure-expected-clang

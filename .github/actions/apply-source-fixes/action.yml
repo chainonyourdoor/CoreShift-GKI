@@ -1,0 +1,45 @@
+name: Apply source fixes
+description: Apply maintained/custom source fixes for selected kernel branches.
+inputs:
+  kernel_version:
+    required: true
+    description: Kernel version to build.
+  source_mode:
+    required: true
+    description: Selected source mode.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+
+        if [ "${{ inputs.source_mode }}" = "google-lts" ]; then
+          echo "source fixes: skipped for google-lts"
+          exit 0
+        fi
+
+        case "${{ inputs.kernel_version }}" in
+          6.12)
+            patch_dir="$GITHUB_WORKSPACE/.github/patches/source-fixes/gki-android16-6.12"
+            ;;
+          *)
+            echo "source fixes: none for kernel_version=${{ inputs.kernel_version }}"
+            exit 0
+            ;;
+        esac
+
+        if [ ! -d "$patch_dir" ]; then
+          echo "source fixes: patch directory missing: $patch_dir"
+          exit 0
+        fi
+
+        cd "$GITHUB_WORKSPACE/kernel/common"
+
+        echo "== apply source fixes =="
+        find "$patch_dir" -maxdepth 1 -type f -name '*.patch' -print | sort |
+          while IFS= read -r patch_file; do
+            echo "patch=$patch_file"
+            git apply --check "$patch_file"
+            git apply "$patch_file"
+          done
