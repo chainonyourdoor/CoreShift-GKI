@@ -168,6 +168,15 @@ Unsupported Pixel SUSFS variants are intentionally omitted from
 `.github/matrix/release_pixel.json`; the workflow does not dynamically generate
 unvalidated combinations.
 
+Pixel variants are expanded because each release artifact represents one
+validated feature combination. This avoids generating unsupported combinations
+dynamically and makes each release asset explicit about manager, SUSFS, BBG,
+source branch, and LTO state. `android14-gs-pixel-6.1` currently has 10
+variants: Vanilla, KernelSU, KowSU, KernelSU+SUSFS, and KowSU+SUSFS, each with
+BBG off/on. Android 16 Pixel branches currently have 6 variants each: Vanilla,
+KernelSU, and KowSU, each with BBG off/on, with SUSFS omitted because the core
+SUSFS patch does not apply.
+
 Pixel branches may use source roots and Kleaf packages that differ from generic
 GKI. The workflow discovers the manifest path for `kernel/common` and builds the
 matching `kernel_aarch64_dist` target instead of forcing every Pixel branch

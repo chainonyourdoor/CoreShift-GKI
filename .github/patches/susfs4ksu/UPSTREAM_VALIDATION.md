@@ -82,3 +82,8 @@ check and apply SUSFS, check and apply BBG, then generate config.
 Unsupported Pixel SUSFS variants are intentionally omitted from
 `.github/matrix/release_pixel.json`. Non-SUSFS manager and BBG variants remain
 only where they were separately validated.
+
+Pixel variants are expanded because each release artifact represents one
+validated feature combination. This avoids generating unsupported combinations
+dynamically and makes each release asset explicit about manager, SUSFS, BBG,
+source branch, and LTO state.
