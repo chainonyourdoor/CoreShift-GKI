@@ -12,8 +12,10 @@ runs:
         set -euo pipefail
 
         cd kernel
+        COMMON_REL="${KERNEL_COMMON_REL:-common}"
+        COMMON_DIR="${KERNEL_COMMON_DIR:-$GITHUB_WORKSPACE/kernel/common}"
 
-        REQUIRED="common/private.required"
+        REQUIRED="$COMMON_REL/private.required"
 
         if [ ! -s "$REQUIRED" ]; then
           echo "No requested config entries to verify."
@@ -26,12 +28,12 @@ runs:
 
         echo "== final config candidates =="
         {
-          find ./out ./common/out \
+          find ./out "./$COMMON_REL/out" \
             -type f \
             \( -name ".config" -o -name "*.config" -o -name "*kernel*.config" \) \
-            ! -path "./common/arch/arm64/configs/*" \
-            ! -path "./common/private.fragment" \
-            ! -path "./common/private.required" \
+            ! -path "./$COMMON_REL/arch/arm64/configs/*" \
+            ! -path "./$COMMON_REL/private.fragment" \
+            ! -path "./$COMMON_REL/private.required" \
             2>/dev/null || true
         } | sort
         echo
@@ -39,17 +41,17 @@ runs:
         CANDIDATES="$(mktemp)"
 
         {
-          find ./out ./common/out \
+          find ./out "./$COMMON_REL/out" \
             -type f \
             \( -name ".config" -o -name "*.config" -o -name "*kernel*.config" \) \
-            ! -path "./common/arch/arm64/configs/*" \
-            ! -path "./common/private.fragment" \
-            ! -path "./common/private.required" \
+            ! -path "./$COMMON_REL/arch/arm64/configs/*" \
+            ! -path "./$COMMON_REL/private.fragment" \
+            ! -path "./$COMMON_REL/private.required" \
             2>/dev/null || true
         } | sort > "$CANDIDATES"
 
         if [ ! -s "$CANDIDATES" ]; then
-          echo "::warning::No final full config candidate found under out/ or common/out/."
+          echo "::warning::No final full config candidate found under out/ or $COMMON_REL/out/."
           if [ "${{ inputs.strict_config }}" = "on" ]; then
             echo "::error::strict_config is on, failing because final config was not found."
             exit 1

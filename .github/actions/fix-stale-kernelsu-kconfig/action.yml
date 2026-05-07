@@ -14,7 +14,9 @@ runs:
       run: |
         set -euo pipefail
 
-        cd kernel/common
+        COMMON_DIR="${KERNEL_COMMON_DIR:-$GITHUB_WORKSPACE/kernel/common}"
+
+        cd "$COMMON_DIR"
 
         stale_kconfig='source "drivers/staging/kernelsu/kernel/Kconfig"'
         staging_makefile_target='drivers/staging/kernelsu/kernel/Makefile'

@@ -17,22 +17,24 @@ runs:
       run: |
         set -euo pipefail
 
-        REQUIRED="kernel/common/private.required"
+        COMMON_REL="${KERNEL_COMMON_REL:-common}"
+        COMMON_DIR="${KERNEL_COMMON_DIR:-$GITHUB_WORKSPACE/kernel/common}"
+        REQUIRED="$COMMON_DIR/private.required"
         mkdir -p out
 
         CANDIDATES="$(mktemp)"
         {
-          find kernel/out kernel/common/out \
+          find kernel/out "$COMMON_DIR/out" \
             -type f \
             \( -name ".config" -o -name "*.config" -o -name "*kernel*.config" \) \
-            ! -path "kernel/common/arch/arm64/configs/*" \
-            ! -path "kernel/common/private.fragment" \
-            ! -path "kernel/common/private.required" \
+            ! -path "$COMMON_DIR/arch/arm64/configs/*" \
+            ! -path "$COMMON_DIR/private.fragment" \
+            ! -path "$COMMON_DIR/private.required" \
             2>/dev/null || true
         } | sort > "$CANDIDATES"
 
         if [ ! -s "$CANDIDATES" ]; then
-          echo "::error::No final .config candidate found under kernel/out/ or kernel/common/out/."
+          echo "::error::No final .config candidate found under kernel/out/ or $COMMON_DIR/out/."
           exit 1
         fi
 

@@ -7,7 +7,7 @@ runs:
       run: |
         set -euo pipefail
 
-        COMMON_DIR="$GITHUB_WORKSPACE/kernel/common"
+        COMMON_DIR="${KERNEL_COMMON_DIR:-$GITHUB_WORKSPACE/kernel/common}"
         NESTED_NAMES="
         KernelSU
         KowSU
@@ -58,7 +58,7 @@ runs:
         }
 
         echo "== status before commits =="
-        show_status "kernel/common" "$COMMON_DIR"
+        show_status "kernel source" "$COMMON_DIR"
         for name in $NESTED_NAMES; do
           show_status "$name" "$COMMON_DIR/$name"
         done
@@ -71,13 +71,13 @@ runs:
 
         echo
         echo "== status after commits =="
-        show_status "kernel/common" "$COMMON_DIR"
+        show_status "kernel source" "$COMMON_DIR"
         for name in $NESTED_NAMES; do
           show_status "$name" "$COMMON_DIR/$name"
         done
 
         FAIL=0
-        guard_clean "kernel/common" "$COMMON_DIR" || FAIL=1
+        guard_clean "kernel source" "$COMMON_DIR" || FAIL=1
         for name in $NESTED_NAMES; do
           guard_clean "$name" "$COMMON_DIR/$name" || FAIL=1
         done

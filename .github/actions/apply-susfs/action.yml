@@ -72,7 +72,9 @@ runs:
           exit 1
         fi
 
-        cd kernel/common
+        COMMON_DIR="${KERNEL_COMMON_DIR:-$GITHUB_WORKSPACE/kernel/common}"
+
+        cd "$COMMON_DIR"
 
         echo "== copy SUSFS files =="
         mkdir -p fs include/linux
@@ -113,16 +115,16 @@ runs:
         echo
         echo "== locate integrated KernelSU root =="
         KSU_MARKERS="$(
-          find "$GITHUB_WORKSPACE/kernel/common" \
+          find "$COMMON_DIR" \
             -type f \
             -path "*/kernel/include/ksu.h" \
             -print
         )"
 
         if [ -z "$KSU_MARKERS" ]; then
-          echo "::error::No integrated KernelSU root found for manager '${{ inputs.manager }}'. Expected a file matching */kernel/include/ksu.h under $GITHUB_WORKSPACE/kernel/common."
+          echo "::error::No integrated KernelSU root found for manager '${{ inputs.manager }}'. Expected a file matching */kernel/include/ksu.h under $COMMON_DIR."
           echo "== nearby KernelSU/KSU directories =="
-          find "$GITHUB_WORKSPACE/kernel/common" \
+          find "$COMMON_DIR" \
             -type d \
             \( -iname '*kernelsu*' -o -iname '*ksu*' \) \
             -print 2>/dev/null |
@@ -148,7 +150,7 @@ runs:
           exit 1
         fi
 
-        cd "$GITHUB_WORKSPACE/kernel/common"
+        cd "$COMMON_DIR"
 
         echo
         echo "== KernelSU Kconfig validation =="
@@ -163,8 +165,8 @@ runs:
         fi
 
         echo
-        echo "== SUSFS kernel/common git diff stat =="
-        git -C "$GITHUB_WORKSPACE/kernel/common" diff --stat
+        echo "== SUSFS source git diff stat =="
+        git -C "$COMMON_DIR" diff --stat
 
         echo
         echo "== SUSFS KernelSU git diff stat =="

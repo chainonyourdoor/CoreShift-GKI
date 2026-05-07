@@ -148,3 +148,31 @@ runs:
         fi
 
         print_disk_usage "after source sync"
+
+        common_rel="$(
+          repo list 2>/dev/null |
+            awk -F' : ' '$2 == "kernel/common" { print $1; exit }'
+        )"
+        common_rel="${common_rel:-common}"
+
+        common_dir="$GITHUB_WORKSPACE/kernel/$common_rel"
+        if [ ! -d "$common_dir" ]; then
+          echo "::error::kernel/common project source path was not found: $common_dir"
+          exit 1
+        fi
+
+        kleaf_pkg="$common_rel"
+        kleaf_target="//${kleaf_pkg}:kernel_aarch64_dist"
+
+        {
+          echo "KERNEL_WORKSPACE_ROOT=$GITHUB_WORKSPACE/kernel"
+          echo "KERNEL_COMMON_REL=$common_rel"
+          echo "KERNEL_COMMON_DIR=$common_dir"
+          echo "KLEAF_DIST_TARGET=$kleaf_target"
+        } >> "$GITHUB_ENV"
+
+        echo "== kernel source mapping =="
+        echo "KERNEL_WORKSPACE_ROOT=$GITHUB_WORKSPACE/kernel"
+        echo "KERNEL_COMMON_REL=$common_rel"
+        echo "KERNEL_COMMON_DIR=$common_dir"
+        echo "KLEAF_DIST_TARGET=$kleaf_target"

@@ -383,7 +383,7 @@ jobs:
               /^SUBLEVEL =/ {s=$2}
               /^EXTRAVERSION =/ {e=$2}
               END {printf "%s.%s.%s%s\n", v, p, s, e}
-            ' kernel/common/Makefile
+            ' "${KERNEL_COMMON_DIR:-$GITHUB_WORKSPACE/kernel/common}/Makefile"
           )"
 
           final_name="v${upstream}-gki-exp-${{ matrix.kernel_version }}-${{ matrix.manager }}${variant_suffix}-${DATE}"

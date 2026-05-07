@@ -24,6 +24,11 @@ runs:
 
         cd kernel
 
+        COMMON_REL="${KERNEL_COMMON_REL:-common}"
+        COMMON_DIR="${KERNEL_COMMON_DIR:-$GITHUB_WORKSPACE/kernel/common}"
+        BAZEL_TARGET="${KLEAF_DIST_TARGET:-//common:kernel_aarch64_dist}"
+        DEFCONFIG_FRAGMENT="//${COMMON_REL}:private.fragment"
+
         JOBS="4"
         if [ "${{ inputs.lto }}" = "full" ]; then
           JOBS="2"
@@ -36,6 +41,9 @@ runs:
         echo "BUILD_ENGINE=$BUILD_ENGINE"
         echo "KERNEL_VERSION=${{ inputs.kernel_version }}"
         echo "SOURCE_MODE=${{ inputs.source_mode }}"
+        echo "KERNEL_COMMON_REL=$COMMON_REL"
+        echo "KERNEL_COMMON_DIR=$COMMON_DIR"
+        echo "KLEAF_DIST_TARGET=$BAZEL_TARGET"
         echo "KMI_BYPASS=${{ inputs.kmi_bypass }}"
         echo "LTO=${{ inputs.lto }}"
         echo "JOBS=$JOBS"
@@ -50,23 +58,23 @@ runs:
           echo "== ashmem KMI diagnostics =="
 
           echo "== ashmem config refs =="
-          find out common/out -type f -name ".config" -print 2>/dev/null |
+          find out "$COMMON_REL/out" -type f -name ".config" -print 2>/dev/null |
             while IFS= read -r config_file; do
               echo "--- $config_file"
               grep -nE 'CONFIG_(ANDROID_)?ASHMEM' "$config_file" || true
             done || true
 
           echo "== ashmem source files =="
-          find drivers/staging/android mm -maxdepth 2 \
+          find "$COMMON_DIR/drivers/staging/android" "$COMMON_DIR/mm" -maxdepth 2 \
             \( -name 'ashmem*' -o -name '*ashmem*' \) -print 2>/dev/null || true
 
           echo "== ashmem export refs =="
           grep -R -nE 'EXPORT_SYMBOL.*(ashmem_area_name|ashmem_area_size|ashmem_area_vmfile|is_ashmem_file)|ashmem_area_name|ashmem_area_size|ashmem_area_vmfile|is_ashmem_file' \
-            drivers/staging/android mm common build 2>/dev/null || true
+            "$COMMON_DIR/drivers/staging/android" "$COMMON_DIR/mm" common build 2>/dev/null || true
 
           echo "== active KMI ashmem symbol-list refs =="
           grep -R -nE 'ashmem_area_name|ashmem_area_size|ashmem_area_vmfile|is_ashmem_file' \
-            common/android common build 2>/dev/null || true
+            "$COMMON_DIR/android" "$COMMON_DIR" build 2>/dev/null || true
         }
 
         if [ "$BUILD_ENGINE" = "kleaf" ]; then
@@ -74,7 +82,7 @@ runs:
           echo "Kleaf build: required GKI modules are not skipped"
           bazel_args=(
             "--lto=${{ inputs.lto }}"
-            "--defconfig_fragment=//common:private.fragment"
+            "--defconfig_fragment=$DEFCONFIG_FRAGMENT"
           )
 
           if [ "${{ inputs.kmi_bypass }}" = "on" ]; then
@@ -91,19 +99,21 @@ runs:
 
           if [ "${{ inputs.source_mode }}" = "pixel" ]; then
             echo "== Pixel Bazel target check =="
-            if ! tools/bazel query //common:kernel_aarch64_dist >/tmp/coreshift-pixel-target.txt 2>/tmp/coreshift-pixel-target.err; then
-              echo "::error::Pixel source branch does not expose //common:kernel_aarch64_dist. Pixel branches may require a device-specific Kleaf target."
+            if ! tools/bazel query "$BAZEL_TARGET" >/tmp/coreshift-pixel-target.txt 2>/tmp/coreshift-pixel-target.err; then
+              echo "::error::Pixel source branch does not expose $BAZEL_TARGET. Pixel branches may require a device-specific Kleaf target."
               echo "== bazel query error =="
               cat /tmp/coreshift-pixel-target.err || true
-              echo "== //common targets =="
-              tools/bazel query '//common:*' 2>/dev/null | sort || true
+              echo "== ${COMMON_REL} dist-like targets =="
+              tools/bazel query "kind(rule, //${COMMON_REL}:*)" 2>/dev/null |
+                grep -E 'kernel.*dist|aarch64.*dist|pixel|gs' |
+                sort || true
               exit 1
             fi
             cat /tmp/coreshift-pixel-target.txt
           fi
 
           build_status=0
-          tools/bazel run "${bazel_args[@]}" //common:kernel_aarch64_dist -- \
+          tools/bazel run "${bazel_args[@]}" "$BAZEL_TARGET" -- \
             --dist_dir=out/dist || build_status=$?
 
           if [ "$build_status" -ne 0 ] && [ "${{ inputs.kernel_version }}" = "6.12" ]; then
@@ -153,7 +163,7 @@ runs:
           else
             echo "GKI_DEFCONFIG_FRAGMENT: unset"
           fi
-          echo "private.fragment=common/private.fragment"
+          echo "private.fragment=$COMMON_REL/private.fragment"
 
           echo
           echo "== clang lookup =="
@@ -173,11 +183,11 @@ runs:
 
           echo
           echo "== final .config candidates =="
-          find ./out ./common/out \
+          find ./out "./$COMMON_REL/out" \
             -type f \
             \( -name ".config" -o -name "*.config" -o -name "*kernel*.config" \) \
-            ! -path "./common/arch/arm64/configs/*" \
-            ! -path "./common/private.fragment" \
-            ! -path "./common/private.required" \
+            ! -path "./$COMMON_REL/arch/arm64/configs/*" \
+            ! -path "./$COMMON_REL/private.fragment" \
+            ! -path "./$COMMON_REL/private.required" \
             2>/dev/null | sort || true
         fi

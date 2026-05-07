@@ -21,7 +21,7 @@ runs:
         fi
 
         BBG_VENDOR="$GITHUB_WORKSPACE/.github/patches/bbg"
-        COMMON_DIR="$GITHUB_WORKSPACE/kernel/common"
+        COMMON_DIR="${KERNEL_COMMON_DIR:-$GITHUB_WORKSPACE/kernel/common}"
         UPSTREAM_FILE="$BBG_VENDOR/UPSTREAM"
         BBG_TARGET="$COMMON_DIR/Baseband-guard"
 
@@ -46,7 +46,7 @@ runs:
         cat "$UPSTREAM_FILE"
 
         if [ ! -d "$COMMON_DIR/security" ] || [ ! -f "$COMMON_DIR/security/Kconfig" ]; then
-          echo "::error::kernel/common security/Kconfig not found"
+          echo "::error::kernel source security/Kconfig not found: $COMMON_DIR/security/Kconfig"
           exit 1
         fi
 
@@ -73,7 +73,7 @@ runs:
         fi
 
         if ! grep -q 'baseband_guard' security/Kconfig; then
-          echo "::error::baseband_guard missing from kernel/common/security/Kconfig after setup"
+          echo "::error::baseband_guard missing from kernel source security/Kconfig after setup"
           grep -n 'config LSM\|default\|baseband' security/Kconfig || true
           exit 1
         fi

@@ -26,7 +26,7 @@ runs:
         MANAGER="${{ inputs.manager }}"
         KERNEL_VERSION="${{ inputs.kernel_version }}"
         MANAGER_DIR="${GITHUB_WORKSPACE}/manager/${MANAGER}"
-        COMMON_DIR="${GITHUB_WORKSPACE}/kernel/common"
+        COMMON_DIR="${KERNEL_COMMON_DIR:-${GITHUB_WORKSPACE}/kernel/common}"
 
         SELECTED_MANAGER_REF=""
         MANAGER_REF_SOURCE="submodule-default"
